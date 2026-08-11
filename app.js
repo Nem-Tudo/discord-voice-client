@@ -23,7 +23,7 @@ const {
 } = require('@nodegui/nodegui');
 const path = require('path');
 
-const { createVoiceClient } = require('./voice-client');
+const { createVoiceClient } = require('./src/voice-client');
 
 const [, , ARG_TOKEN, ARG_GUILD, ARG_CHANNEL] = process.argv;
 
@@ -71,7 +71,7 @@ function makeField(labelText, defaultValue) {
     return { wrapper, input };
 }
 
-const tokenField = makeField('Token do bot', ARG_TOKEN);
+const tokenField = makeField('Token', ARG_TOKEN);
 tokenField.input.setEchoMode(2);
 const guildField = makeField('ID do servidor', ARG_GUILD);
 const channelField = makeField('ID do canal de voz', ARG_CHANNEL);
