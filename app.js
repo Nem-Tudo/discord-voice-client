@@ -23,7 +23,7 @@ const {
 } = require('@nodegui/nodegui');
 const path = require('path');
 
-const { createVoiceClient } = require('./src/voice-client');
+const { createVoiceClient } = require('./src/voice-client.js');
 
 const [, , ARG_TOKEN, ARG_GUILD, ARG_CHANNEL] = process.argv;
 
@@ -38,7 +38,7 @@ const ICON_SIZE = new QSize(20, 20); // Tamanho dos ícones dentro dos botões
 
 // ---------- Janela principal ----------
 const win = new QMainWindow();
-win.setWindowTitle('Discord Voice Bot');
+win.setWindowTitle('Discord Voice');
 win.setFixedSize(460, 640);
 
 const central = new QWidget();
