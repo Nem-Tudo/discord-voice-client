@@ -1,0 +1,41 @@
+directories:
+  output: dist-electron
+  buildResources: build
+appId: me.nemtudo.discordvoicepro
+productName: Discord Voice Pro
+files:
+  - filter:
+      - dist/**/*
+      - app.js
+      - src/**/*
+      - package.json
+      - '!node_modules/**/*.{md,ts,map}'
+      - '!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}'
+extraResources: []
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: build/icon.ico
+mac:
+  target:
+    - dmg
+    - zip
+  icon: build/icon.icns
+  category: public.app-category.social-networking
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: build/icons
+  category: Network
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+electronVersion: 37.10.3

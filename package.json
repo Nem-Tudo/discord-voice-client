@@ -42,6 +42,7 @@
     "files": [
       "dist/**/*",
       "app.js",
+      "src/**/*",
       "package.json",
       "!node_modules/**/*.{md,ts,map}",
       "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}"
@@ -51,11 +52,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico"
