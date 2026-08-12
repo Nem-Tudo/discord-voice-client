@@ -608,6 +608,25 @@ input:disabled {
     background: #a1282c;
 }
 
+.toolbar-icon-button.noise-suppression-active {
+    color: #fff;
+    background: #5865f2;
+}
+
+.toolbar-icon-button.noise-suppression-active:hover:not(:disabled) {
+    background: #4752c4;
+}
+
+.toolbar-icon-button.noise-suppression-inactive {
+    color: #dbdee1;
+    background: #4e5058;
+}
+
+.toolbar-icon-button.noise-suppression-inactive:hover:not(:disabled) {
+    color: #fff;
+    background: #5b5d66;
+}
+
 .toolbar-icon-button.is-danger {
     background-color: #f23f42;
     color: #fff;

@@ -69,6 +69,8 @@ contextBridge.exposeInMainWorld('discordVoice', {
     listMics: () => ipcRenderer.invoke('voice:list-mics'),
     setMic: (deviceId) => ipcRenderer.invoke('voice:set-mic', deviceId),
     setMicGain: (percent) => ipcRenderer.invoke('voice:set-mic-gain', percent),
+    setNoiseSuppression: (enabled) => ipcRenderer.invoke('voice:set-noise-suppression', enabled),
+    getNoiseSuppression: () => ipcRenderer.invoke('voice:get-noise-suppression'),
     startMicTest: (deviceId) => ipcRenderer.invoke('voice:start-mic-test', deviceId),
     stopMicTest: () => ipcRenderer.invoke('voice:stop-mic-test'),
     openDiscordUser: (userId) => ipcRenderer.invoke('open-discord-user', userId)

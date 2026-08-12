@@ -17,6 +17,7 @@ let browserClient = null;
 let activeToken = null;
 let allMuted = false;
 let allDeafened = false;
+let noiseSuppressionEnabled = true;
 
 /** ID do microfone escolhido na UI (null = padrão do sistema) */
 let selectedMicId = null;
@@ -51,6 +52,7 @@ function activeCallsPayload() {
     return {
         allMuted,
         allDeafened,
+        noiseSuppressionEnabled,
 
         calls: Array.from(
             voiceClients.values()
@@ -155,6 +157,7 @@ async function startMicTestInternal(deviceId) {
         micTestGainProcessor = gain;
 
         await rnnoise.init();
+        rnnoise.enabled = noiseSuppressionEnabled;
 
         micTestRtAudio = new audify.RtAudio();
 
@@ -407,6 +410,7 @@ function startVoiceCall(guild, channel, {
 
             applyMicToClient(voiceClient);
             applyGainToClient(voiceClient);
+            applyNoiseSuppressionToClient(voiceClient);
             applySpeakingState(entry);
 
             publishActiveCalls();
@@ -752,6 +756,14 @@ ipcMain.handle('voice:set-all-deafen', async () => {
 // IPC – microfone
 // ============================================================
 
+function applyNoiseSuppressionToClient(client) {
+    if (!client) return;
+    if (typeof client.setNoiseSuppression === 'function') {
+        client.setNoiseSuppression(noiseSuppressionEnabled);
+    }
+}
+
+
 ipcMain.handle('voice:list-mics', async () => {
     try {
         return AudioSender.listInputDevices();
@@ -793,10 +805,27 @@ ipcMain.handle('voice:set-mic-gain', async (_event, percent) => {
 
     for (const entry of voiceClients.values()) {
         applyGainToClient(entry.client);
+        applyNoiseSuppressionToClient(entry.client);
     }
 
     return selectedMicGain;
 });
+
+ipcMain.handle('voice:set-noise-suppression', async (_event, enabled) => {
+    noiseSuppressionEnabled = Boolean(enabled);
+    if (micTestPipeline) {
+        const rnnoise = micTestPipeline.processors?.get?.('rnnoise');
+        if (rnnoise) rnnoise.enabled = noiseSuppressionEnabled;
+    }
+    for (const entry of voiceClients.values()) {
+        applyNoiseSuppressionToClient(entry.client);
+    }
+    log(`[Mic] Supressão de ruído ${noiseSuppressionEnabled ? 'ativada' : 'desativada'}.`);
+    publishActiveCalls();
+    return noiseSuppressionEnabled;
+});
+
+ipcMain.handle('voice:get-noise-suppression', async () => noiseSuppressionEnabled);
 
 ipcMain.handle('voice:start-mic-test', async (_event, deviceId) => {
     const id =

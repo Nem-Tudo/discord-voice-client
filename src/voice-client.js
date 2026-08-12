@@ -2066,6 +2066,14 @@ function createVoiceClient({
             this.setMicGain(percent);
         },
 
+        setNoiseSuppression(enabled) {
+            return audioSender.setNoiseSuppressionEnabled(Boolean(enabled));
+        },
+
+        isNoiseSuppressionEnabled() {
+            return audioSender.isNoiseSuppressionEnabled();
+        },
+
         startMic() {
             audioSender.startSpeaking();
         },

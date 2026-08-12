@@ -12,7 +12,7 @@ const VIEW_CHANNEL = 1024n;
 const CONNECT = 1048576n;
 const MOVE_MEMBERS = 2n;
 
-const emptyActiveCalls = { allMuted: false, allDeafened: false, calls: [] };
+const emptyActiveCalls = { allMuted: false, allDeafened: false, noiseSuppressionEnabled: true, calls: [] };
 
 function initialFor(text) {
     return String(text || '?').trim().slice(0, 1).toUpperCase() || '?';
@@ -1332,7 +1332,7 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
     );
 }
 
-function ToolbarIconButton({ icon, label, onClick, active = false, danger = false, disabled = false, placeholder = false }) {
+function ToolbarIconButton({ icon, label, onClick, active = false, danger = false, disabled = false, placeholder = false, className = '' }) {
     const buttonRef = useRef(null);
 
     useEffect(() => {
@@ -1356,6 +1356,7 @@ function ToolbarIconButton({ icon, label, onClick, active = false, danger = fals
             type="button"
             className={[
                 'toolbar-icon-button',
+                className,
                 active ? 'is-active' : '',
                 danger ? 'is-danger' : '',
                 placeholder ? 'is-placeholder' : ''
@@ -1366,6 +1367,14 @@ function ToolbarIconButton({ icon, label, onClick, active = false, danger = fals
         >
             {icon}
         </button>
+    );
+}
+
+function NoiseSuppressionIcon() {
+    return (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
     );
 }
 
@@ -1414,6 +1423,13 @@ function ActionToolbar({ activeCalls }) {
                 label="Compartilhar áudio do sistema (em breve)"
                 placeholder
                 onClick={noop}
+            />
+
+            <ToolbarIconButton
+                icon={<NoiseSuppressionIcon />}
+                label={activeCalls.noiseSuppressionEnabled ? 'Desativar supressão de ruído (RNNoise)' : 'Ativar supressão de ruído (RNNoise)'}
+                className={activeCalls.noiseSuppressionEnabled ? 'noise-suppression-active' : 'noise-suppression-inactive'}
+                onClick={() => window.discordVoice.setNoiseSuppression(!activeCalls.noiseSuppressionEnabled)}
             />
 
             <ToolbarIconButton
