@@ -41,16 +41,20 @@ function activeCallsPayload() {
         allMuted,
         allDeafened,
 
-        calls: Array.from(voiceClients.values()).map((entry) => ({
+        calls: Array.from(
+            voiceClients.values()
+        ).map((entry) => ({
             guildId: entry.guildId,
             guildName: entry.guildName,
+
             channelId: entry.channelId,
             channelName: entry.channelName,
+
             muted: entry.muted,
             deafened: entry.deafened,
 
-            status: entry.status,
-            error: entry.error,
+            status: entry.status || 'connected',
+            error: entry.error || null,
 
             switching: Boolean(entry.pending)
         }))
@@ -219,21 +223,83 @@ function applySpeakingState(entry) {
     }
 }
 
-function startVoiceCall(guild, channel) {
+function showVoiceJoinError(guild, channel, message) {
+    const entry = {
+        guildId: guild.id,
+        guildName: guild.name,
+        channelId: channel.id,
+        channelName: channel.name,
+
+        muted: false,
+        deafened: false,
+
+        status: 'error',
+        error: message,
+
+        pending: null,
+        client: null
+    };
+
+    voiceClients.set(guild.id, entry);
+
+    publishActiveCalls();
+
+    sendToRenderer(
+        'voice:status',
+        `Erro ao entrar em ${channel.name}: ${message}`
+    );
+
+    log(
+        `[Voice] ERRO ao entrar em ${channel.name}: ${message}`
+    );
+
+    setTimeout(() => {
+        if (voiceClients.get(guild.id) === entry) {
+            voiceClients.delete(guild.id);
+            publishActiveCalls();
+        }
+    }, 4000);
+}
+
+function startVoiceCall(guild, channel, {
+    canConnect = true,
+    isFull = false
+} = {}) {
     if (!activeToken) {
         log('Carregue os servidores antes de entrar em uma call.');
+        return;
+    }
+
+    if (!canConnect) {
+        showVoiceJoinError(
+            guild,
+            channel,
+            'Você não tem permissão para entrar neste canal.'
+        );
+
+        return;
+    }
+
+    if (isFull) {
+        showVoiceJoinError(
+            guild,
+            channel,
+            'Este canal de voz está cheio.'
+        );
+
         return;
     }
 
     const entry = {
         guildId: guild.id,
         guildName: guild.name,
+
         channelId: channel.id,
         channelName: channel.name,
+
         muted: allMuted,
         deafened: allDeafened,
 
-        // connecting | connected | error
         status: 'connecting',
         error: null,
 
@@ -252,7 +318,9 @@ function startVoiceCall(guild, channel) {
             entry.status = 'connected';
             entry.error = null;
 
-            log(`Conectado em ${channel.name} (${guild.name}).`);
+            log(
+                `Conectado em ${channel.name} (${guild.name}).`
+            );
 
             applyMicToClient(voiceClient);
             applyGainToClient(voiceClient);
@@ -260,7 +328,10 @@ function startVoiceCall(guild, channel) {
 
             publishActiveCalls();
 
-            sendToRenderer('voice:status', `Conectado em ${channel.name}.`);
+            sendToRenderer(
+                'voice:status',
+                `Conectado em ${channel.name}.`
+            );
         },
         onDisconnected: (reason) => {
             if (voiceClients.get(guild.id) !== entry) return;
@@ -327,13 +398,44 @@ function startVoiceCall(guild, channel) {
                 }
             }, 4000);
         },
+        onJoinError: (reason) => {
+            if (voiceClients.get(guild.id) !== entry) {
+                return;
+            }
+
+            entry.status = 'error';
+            entry.error = reason;
+
+            publishActiveCalls();
+
+            sendToRenderer(
+                'voice:status',
+                `Erro ao entrar em ${channel.name}: ${reason}`
+            );
+
+            log(
+                `[Voice] ERRO ao entrar em ${channel.name}: ${reason}`
+            );
+
+            setTimeout(() => {
+                if (voiceClients.get(guild.id) === entry) {
+                    voiceClients.delete(guild.id);
+                    publishActiveCalls();
+                }
+            }, 4000);
+        },
     });
 
     entry.client = voiceClient;
     entry.status = 'connecting';
-    
+
     voiceClients.set(guild.id, entry);
     publishActiveCalls();
+
+    sendToRenderer(
+        'voice:status',
+        `Conectando em ${channel.name}...`
+    );
 
     voiceClient.connect();
 

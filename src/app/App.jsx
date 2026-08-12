@@ -8,6 +8,8 @@ import deafenOffIcon from '../../assets/deafen_off.png';
 const ADMINISTRATOR = 8n;
 const VIEW_CHANNEL = 1024n;
 const CONNECT = 1048576n;
+const MOVE_MEMBERS = 2n;
+
 const emptyActiveCalls = { allMuted: false, allDeafened: false, calls: [] };
 
 function initialFor(text) {
@@ -19,6 +21,42 @@ function Avatar({ className, text, url }) {
         <span className={className}>
             {url ? <img src={url} alt="" referrerPolicy="no-referrer" /> : initialFor(text)}
         </span>
+    );
+}
+
+function LockIcon() {
+    return (
+        <svg
+            className="voice-lock-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+        >
+            <rect
+                x="5"
+                y="10"
+                width="14"
+                height="10"
+                rx="2"
+                fill="currentColor"
+            />
+
+            <path
+                d="M8 10V7a4 4 0 0 1 8 0v3"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+            />
+
+            <circle
+                cx="12"
+                cy="15"
+                r="1.2"
+                fill="#1e1f22"
+            />
+        </svg>
     );
 }
 
@@ -111,37 +149,77 @@ function normalizeGuilds(previous, data) {
     return { ...previous, [next.id]: next };
 }
 
-function canEnterVoiceChannel(guild, channel, currentUserId) {
+function getVoiceChannelPermissions(guild, channel, currentUserId) {
     const member = guild.members[currentUserId];
-    if (!member) return true;
-    if (guild.owner_id === currentUserId) return true;
 
-    const roleIds = new Set([guild.id, ...(member.roles || [])]);
+    if (!member) {
+        return {
+            view: true,
+            connect: true,
+            connectToFull: true
+        };
+    }
+
+    if (guild.owner_id === currentUserId) {
+        return {
+            view: true,
+            connect: true,
+            connectToFull: true
+        };
+    }
+
+    const roleIds = new Set([
+        guild.id,
+        ...(member.roles || [])
+    ]);
+
     let permissions = 0n;
 
     for (const role of Object.values(guild.roles)) {
-        if (roleIds.has(role.id)) permissions |= permissionBits(role.permissions);
+        if (roleIds.has(role.id)) {
+            permissions |= permissionBits(role.permissions);
+        }
     }
 
-    if ((permissions & ADMINISTRATOR) === ADMINISTRATOR) return true;
+    if ((permissions & ADMINISTRATOR) === ADMINISTRATOR) {
+        return {
+            view: true,
+            connect: true,
+            connectToFull: true
+        };
+    }
 
     const parent = guild.categories[channel.parent_id];
-    const overwrites = channel.permission_overwrites?.length
-        ? channel.permission_overwrites
-        : (parent?.permission_overwrites || []);
+
+    const overwrites =
+        channel.permission_overwrites?.length
+            ? channel.permission_overwrites
+            : (parent?.permission_overwrites || []);
 
     const apply = (overwrite) => {
         permissions &= ~permissionBits(overwrite.deny);
         permissions |= permissionBits(overwrite.allow);
     };
 
-    const everyone = overwrites.find((overwrite) => overwrite.id === guild.id);
-    if (everyone) apply(everyone);
+    // @everyone
+    const everyone = overwrites.find(
+        overwrite => overwrite.id === guild.id
+    );
 
+    if (everyone) {
+        apply(everyone);
+    }
+
+    // Cargos
     let roleDeny = 0n;
     let roleAllow = 0n;
+
     for (const overwrite of overwrites) {
-        if (overwrite.type === 0 && overwrite.id !== guild.id && roleIds.has(overwrite.id)) {
+        if (
+            overwrite.type === 0 &&
+            overwrite.id !== guild.id &&
+            roleIds.has(overwrite.id)
+        ) {
             roleDeny |= permissionBits(overwrite.deny);
             roleAllow |= permissionBits(overwrite.allow);
         }
@@ -150,10 +228,31 @@ function canEnterVoiceChannel(guild, channel, currentUserId) {
     permissions &= ~roleDeny;
     permissions |= roleAllow;
 
-    const memberOverwrite = overwrites.find((overwrite) => overwrite.type === 1 && overwrite.id === currentUserId);
-    if (memberOverwrite) apply(memberOverwrite);
+    // Usuário
+    const memberOverwrite = overwrites.find(
+        overwrite =>
+            overwrite.type === 1 &&
+            overwrite.id === currentUserId
+    );
 
-    return (permissions & VIEW_CHANNEL) === VIEW_CHANNEL && (permissions & CONNECT) === CONNECT;
+    if (memberOverwrite) {
+        apply(memberOverwrite);
+    }
+
+    const view =
+        (permissions & VIEW_CHANNEL) === VIEW_CHANNEL;
+
+    const connect =
+        (permissions & CONNECT) === CONNECT;
+
+    const connectToFull =
+        (permissions & MOVE_MEMBERS) === MOVE_MEMBERS;
+
+    return {
+        view,
+        connect,
+        connectToFull
+    };
 }
 
 function activeEntryFor(activeCalls, guildId) {
@@ -691,12 +790,20 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
         if (!guild) return [];
 
         return Object.values(guild.channels)
-            .filter(
-                (channel) =>
-                    channel.type === 2 &&
-                    canEnterVoiceChannel(guild, channel, currentUserId)
-            )
-            .sort((a, b) => (a.position || 0) - (b.position || 0));
+            .filter((channel) => {
+                const permissions = getVoiceChannelPermissions(
+                    guild,
+                    channel,
+                    currentUserId
+                );
+
+                return permissions.view;
+            })
+            .sort(
+                (a, b) =>
+                    (a.position || 0) -
+                    (b.position || 0)
+            );
     }, [guild, currentUserId]);
 
     const categories = useMemo(() => {
@@ -816,6 +923,7 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
                                             guild={guild}
                                             channel={channel}
                                             activeCalls={activeCalls}
+                                            currentUserId={currentUserId}
                                         />
                                     ))}
                                 </div>
@@ -828,12 +936,20 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
     );
 }
 
-function ChannelCard({ guild, channel, activeCalls }) {
+function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
     const active = activeEntryForChannel(
         activeCalls,
         guild.id,
         channel.id
     );
+
+    const permissions = getVoiceChannelPermissions(
+        guild,
+        channel,
+        currentUserId
+    );
+
+    const locked = !permissions.connect;
 
     const connecting = active?.status === 'connecting';
     const connected = active?.status === 'connected';
@@ -863,18 +979,29 @@ function ChannelCard({ guild, channel, activeCalls }) {
     const hasLimit =
         Number(channel.user_limit || 0) > 0;
 
+    const isFull =
+        hasLimit &&
+        members.length >= Number(channel.user_limit);
+
     const joinCall = () => {
-        if (connecting) return;
+        if (active?.status === 'connecting') {
+            return;
+        }
 
         window.discordVoice.joinCall({
             guild: {
                 id: guild.id,
                 name: guild.name
             },
+
             channel: {
                 id: channel.id,
-                name: channel.name
-            }
+                name: channel.name,
+                userLimit: Number(channel.user_limit || 0)
+            },
+
+            canConnect: permissions.connect,
+            isFull
         });
     };
 
@@ -884,19 +1011,29 @@ function ChannelCard({ guild, channel, activeCalls }) {
                 'discord-voice-channel',
                 connected ? 'active' : '',
                 connecting ? 'connecting' : '',
-                error ? 'error' : ''
-            ].filter(Boolean).join(' ')}
+                error ? 'error' : '',
+                locked ? 'locked' : ''
+            ]
+                .filter(Boolean)
+                .join(' ')}
         >
             <div
                 className="discord-voice-channel-row"
                 role="button"
                 tabIndex={0}
-                onClick={joinCall}
+                onClick={() => {
+                    if (locked) return alert("Você não tem permissão para entrar nesse canal");
+                    if (isFull && !permissions.connectToFull) return alert("Este canal está cheio")
+                    joinCall()
+                }}
                 onKeyDown={(event) =>
                     activateWithKeyboard(event, joinCall)
                 }
             >
-                <VoiceChannelIcon />
+
+                {locked ? (
+                    <LockIcon />
+                ) : <VoiceChannelIcon />}
 
                 <span className="discord-voice-channel-name">
                     {channel.name}
@@ -923,13 +1060,15 @@ function ChannelCard({ guild, channel, activeCalls }) {
                         <span className="voice-status-dot" />
                         Conectando...
                     </span>
-                ) : error ? (
+                ) : null}
+
+                {error ? (
                     <span
                         className="voice-connection-status error"
                         title={active.error || 'Erro desconhecido'}
                     >
                         <span className="voice-status-dot" />
-                        Erro ao conectar
+                        Erro
                     </span>
                 ) : null}
             </div>

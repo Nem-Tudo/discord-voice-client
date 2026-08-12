@@ -1049,6 +1049,27 @@ input:disabled {
     color: #f23f42;
 }
 
+.voice-lock-icon {
+    flex: 0 0 auto;
+
+    width: 16px;
+    height: 16px;
+
+    color: #80848e;
+}
+
+.discord-voice-channel.locked .discord-voice-channel-name {
+    color: #80848e;
+}
+
+.discord-voice-channel.locked .voice-channel-icon {
+    color: #80848e;
+}
+
+.discord-voice-channel.locked:hover {
+    background: #2b2d31;
+}
+
 @keyframes voice-connecting-pulse {
 
     0%,

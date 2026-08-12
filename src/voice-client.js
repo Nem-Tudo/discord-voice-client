@@ -67,7 +67,8 @@ function createVoiceClient({
     onGuildCreate,
     onVoiceStateUpdate,
     onReady,
-    onDisconnected
+    onDisconnected,
+    onJoinError
 }) {
     const log = (msg) => {
         if (onLog) {
@@ -159,6 +160,9 @@ function createVoiceClient({
 
     let intentionalDisconnect = false;
     let sessionEstablished = false;
+
+    let joinFailureReported = false;
+    let joinTimeout = null;
 
 
     // ============================================================
@@ -362,6 +366,43 @@ function createVoiceClient({
 
 
             case 'VOICE_STATE_UPDATE': {
+
+                if (
+                    guildId &&
+                    channelId &&
+                    d.user_id === botUserId
+                ) {
+                    /*
+                     * Discord enviou nosso estado de voz.
+                     *
+                     * Se o channel_id não é o canal solicitado,
+                     * nossa entrada foi rejeitada.
+                     */
+                    if (
+                        !d.channel_id &&
+                        !sessionEstablished &&
+                        !intentionalDisconnect &&
+                        !joinFailureReported
+                    ) {
+                        joinFailureReported = true;
+
+                        const reason =
+                            'O Discord recusou a entrada neste canal.';
+
+                        log(`[Voice] ${reason}`);
+
+                        if (onJoinError) {
+                            onJoinError(reason);
+                        }
+                    }
+
+                    if (d.channel_id === channelId) {
+                        voiceSessionId = d.session_id;
+
+                        maybeConnectVoice();
+                    }
+                }
+
                 if (onVoiceStateUpdate) {
                     onVoiceStateUpdate(d);
                 }
@@ -1716,6 +1757,28 @@ function createVoiceClient({
             }
 
             intentionalDisconnect = false;
+            joinFailureReported = false;
+
+            clearTimeout(joinTimeout);
+
+            joinTimeout = setTimeout(() => {
+                if (
+                    !sessionEstablished &&
+                    !intentionalDisconnect &&
+                    !joinFailureReported
+                ) {
+                    joinFailureReported = true;
+
+                    const reason =
+                        'Tempo limite excedido ao conectar ao canal de voz.';
+
+                    log(`[Voice] ${reason}`);
+
+                    if (onJoinError) {
+                        onJoinError(reason);
+                    }
+                }
+            }, 12000);
 
             connectGateway();
         },
