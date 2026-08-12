@@ -988,7 +988,6 @@ input:disabled {
     height: 14px;
 
     object-fit: contain;
-    filter: invert(1);
 }
 
 /* ===== CONTROLES DA CALL ATIVA ===== */

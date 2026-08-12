@@ -903,6 +903,8 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
             )
             : channels;
 
+        // Discord ordena a árvore pela posição global dos containers.
+        // Isso permite que canais sem categoria apareçam entre categorias.
         const groups = [];
 
         for (const category of categories) {
@@ -913,22 +915,37 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
             if (categoryChannels.length) {
                 groups.push({
                     category,
-                    channels: categoryChannels
+                    channels: categoryChannels,
+                    position: Number(category.position || 0),
+                    uncategorized: false
                 });
             }
         }
 
-        // Canais sem categoria
         const uncategorized = matches
             .filter((channel) => !channel.parent_id)
             .sort((a, b) => (a.position || 0) - (b.position || 0));
 
-        if (uncategorized.length) {
+        for (const channel of uncategorized) {
             groups.push({
                 category: null,
-                channels: uncategorized
+                channels: [channel],
+                position: Number(channel.position || 0),
+                uncategorized: true
             });
         }
+
+        groups.sort((a, b) => {
+            const positionDiff = a.position - b.position;
+            if (positionDiff !== 0) return positionDiff;
+
+            if (a.uncategorized !== b.uncategorized) {
+                return a.uncategorized ? 1 : -1;
+            }
+
+            return (a.category?.id || a.channels[0]?.id || '')
+                .localeCompare(b.category?.id || b.channels[0]?.id || '');
+        });
 
         return groups;
     }, [channels, categories, query]);
@@ -1039,6 +1056,19 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
     const members = Object.values(guild.voiceStates)
         .filter((state) => state.channel_id === channel.id)
         .sort((a, b) => {
+            // Prioridade visual: Live > câmera > falando > nome.
+            const priorityA =
+                (a.self_stream ? 4 : 0) +
+                (a.self_video ? 2 : 0) +
+                (a.speaking ? 1 : 0);
+
+            const priorityB =
+                (b.self_stream ? 4 : 0) +
+                (b.self_video ? 2 : 0) +
+                (b.speaking ? 1 : 0);
+
+            if (priorityA !== priorityB) return priorityB - priorityA;
+
             const userA = getStateUser(guild, a);
             const userB = getStateUser(guild, b);
 
