@@ -9,6 +9,7 @@ const { AudioSender } = require('./src/audio-sender.js');
 const [, , ARG_TOKEN] = process.argv;
 
 let mainWindow = null;
+let logsWindow = null;
 let browserClient = null;
 let activeToken = null;
 let allMuted = false;
@@ -31,9 +32,14 @@ function sendToRenderer(channel, payload) {
     mainWindow.webContents.send(channel, payload);
 }
 
+function sendToLogsWindow(channel, payload) {
+    if (!logsWindow || logsWindow.isDestroyed()) return;
+    logsWindow.webContents.send(channel, payload);
+}
+
 function log(message) {
     const time = new Date().toLocaleTimeString('pt-BR');
-    sendToRenderer('voice:log', `[${time}] ${message}`);
+    sendToLogsWindow('voice:log', `[${time}] ${message}`);
 }
 
 function activeCallsPayload() {
@@ -521,6 +527,43 @@ function startVoiceCall(guild, channel, {
     if (entry.deafened) voiceClient.setDeafen(true);
 }
 
+function createLogsWindow() {
+    if (!mainWindow) return;
+
+    const mainBounds = mainWindow.getBounds();
+    const logsWidth = 420;
+
+    logsWindow = new BrowserWindow({
+        x: mainBounds.x + mainBounds.width,
+        y: mainBounds.y,
+        width: logsWidth,
+        height: mainBounds.height,
+        minWidth: 300,
+        minHeight: 300,
+        title: 'Discord Voice Pro — Logs',
+        backgroundColor: '#1e1f22',
+        icon: "./assets/logo.png",
+        parent: mainWindow,
+        show: false,
+        webPreferences: {
+            preload: path.join(__dirname, 'src', 'app', 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
+
+    logsWindow.setMenuBarVisibility(false);
+    logsWindow.loadFile(path.join(__dirname, 'src', 'dist', 'logs.html'));
+
+    logsWindow.once('ready-to-show', () => {
+        logsWindow.show();
+    });
+
+    logsWindow.on('closed', () => {
+        logsWindow = null;
+    });
+}
+
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1024,
@@ -545,11 +588,24 @@ function createWindow() {
         publishActiveCalls();
     });
 
+    mainWindow.on('move', () => {
+        // Mantém a janela de logs "grudada" à direita da janela principal.
+        if (!logsWindow || logsWindow.isDestroyed()) return;
+        const mainBounds = mainWindow.getBounds();
+        logsWindow.setPosition(mainBounds.x + mainBounds.width, mainBounds.y);
+    });
+
     mainWindow.on('close', () => {
         stopMicTestInternal();
         stopAllVoiceClients();
         stopBrowserClient();
+
+        if (logsWindow && !logsWindow.isDestroyed()) {
+            logsWindow.close();
+        }
     });
+
+    createLogsWindow();
 }
 
 // ============================================================
@@ -664,6 +720,14 @@ ipcMain.handle('voice:set-call-deafen', async (_event, { guildId }) => {
     publishActiveCalls();
 });
 
+ipcMain.handle('voice:leave-all-calls', async () => {
+    if (!voiceClients.size) return;
+
+    stopAllVoiceClients();
+    sendToRenderer('voice:status', 'Você saiu de todas as calls.');
+    log('[Voice] Saiu de todas as calls ativas.');
+});
+
 ipcMain.handle('voice:set-all-mute', async () => {
     allMuted = !allMuted;
     for (const entry of voiceClients.values()) {
@@ -766,6 +830,8 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+    } else if (mainWindow && (!logsWindow || logsWindow.isDestroyed())) {
+        createLogsWindow();
     }
 });
 

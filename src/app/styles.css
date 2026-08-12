@@ -127,9 +127,8 @@ input:disabled {
 
 .field span,
 .panel h2,
-.log-section h2,
 .mic-section h2,
-.global-voice-controls h2 {
+.action-toolbar-heading {
     margin: 0;
     color: #b5bac1;
     font-size: 11px;
@@ -196,9 +195,7 @@ input:disabled {
 }
 
 .panel,
-.log-section,
-.mic-section,
-.global-voice-controls {
+.mic-section {
     display: flex;
     min-height: 0;
     flex-direction: column;
@@ -344,7 +341,7 @@ input:disabled {
 }
 
 .active-card {
-    background: #2b2d31;
+    background: #4e5058;
 }
 
 
@@ -474,35 +471,11 @@ input:disabled {
     font-weight: 700;
 }
 
-/* ===== RODAPÉ: mute geral + microfone ===== */
+/* ===== RODAPÉ: microfone ===== */
 .bottom-controls {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 8px;
+    display: flex;
     flex: 0 0 auto;
     align-items: stretch;
-}
-
-.global-voice-controls {
-    min-width: 140px;
-    padding: 8px;
-    background: #1e1f22;
-    border-radius: 6px;
-}
-
-.global-voice-buttons {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    min-height: 44px;
-    padding: 4px 0;
-}
-
-.global-voice-hint {
-    color: #949ba4;
-    font-size: 11px;
-    white-space: nowrap;
 }
 
 .mic-section {
@@ -589,9 +562,112 @@ input:disabled {
     background: #a1282c;
 }
 
-.log-section {
-    flex: 0 0 90px;
-    min-height: 70px;
+/* ===== TOOLBAR DE AÇÕES (onde antes ficavam os logs) ===== */
+.action-toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 56px;
+    padding: 10px;
+    background: #1e1f22;
+    border-radius: 6px;
+}
+
+.toolbar-icon-button {
+    display: inline-flex;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    align-items: center;
+    justify-content: center;
+    color: #dbdee1;
+    background: #4e5058;
+    border: 0;
+    border-radius: 8px;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.toolbar-icon-button img {
+    width: 20px;
+    height: 20px;
+}
+
+.toolbar-icon-button:hover:not(:disabled) {
+    color: #fff;
+    background: #4e5058;
+}
+
+.toolbar-icon-button.is-active {
+    color: #fff;
+    background: #da373c;
+}
+
+.toolbar-icon-button.is-active:hover:not(:disabled) {
+    background: #a1282c;
+}
+
+.toolbar-icon-button.is-danger {
+    background-color: #f23f42;
+    color: #fff;
+}
+
+.toolbar-icon-button.is-danger:hover:not(:disabled) {
+    background: #ac2b2f;
+}
+
+.toolbar-icon-button.is-placeholder {
+    color: #949ba4;
+}
+
+.toolbar-icon-button.is-placeholder:hover:not(:disabled) {
+    color: #f2f3f5;
+    background: #4e5058;
+}
+
+.toolbar-icon-button:disabled {
+    color: #ffffff;
+    cursor: default;
+    opacity: 0.6;
+}
+
+.toolbar-divider {
+    width: 1px;
+    height: 28px;
+    margin: 0 4px;
+    background: #3f4147;
+    flex: 0 0 1px;
+}
+
+/* ===== BALÃO DE TOOLTIP (tippy.js) ===== */
+.tippy-box[data-theme~='discord-voice'] {
+    color: #fff;
+    background-color: #111214;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.tippy-box[data-theme~='discord-voice'] .tippy-content {
+    padding: 6px 10px;
+}
+
+.tippy-box[data-theme~='discord-voice'][data-placement^='top']>.tippy-arrow::before {
+    border-top-color: #111214;
+}
+
+.tippy-box[data-theme~='discord-voice'][data-placement^='bottom']>.tippy-arrow::before {
+    border-bottom-color: #111214;
+}
+
+.tippy-box[data-theme~='discord-voice'][data-placement^='left']>.tippy-arrow::before {
+    border-left-color: #111214;
+}
+
+.tippy-box[data-theme~='discord-voice'][data-placement^='right']>.tippy-arrow::before {
+    border-right-color: #111214;
 }
 
 .log-area {
@@ -761,6 +837,7 @@ input:disabled {
 .discord-voice-channel.active {
     background: #2b2d31;
 }
+
 
 .discord-voice-channel-row {
     display: flex;
@@ -1160,19 +1237,15 @@ input:disabled {
     }
 
     .bottom-controls {
-        grid-template-columns: 1fr;
-    }
-
-    .global-voice-controls {
-        min-width: 0;
+        flex-direction: column;
     }
 
     .mic-area {
         flex-wrap: wrap;
     }
 
-    .log-section {
-        flex-basis: 120px;
+    .action-toolbar {
+        justify-content: center;
     }
 }
 
@@ -1208,4 +1281,36 @@ input:disabled {
 #root {
     width: 100%;
     height: 100%;
+}
+
+/* ===== JANELA SEPARADA DE LOGS ===== */
+.logs-window {
+    display: flex;
+    width: 100%;
+    height: 100vh;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.logs-window-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.logs-window-header h1 {
+    margin: 0;
+    color: #b5bac1;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.logs-window-area {
+    flex: 1;
 }

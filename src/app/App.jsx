@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import tippy from 'tippy.js';
+import 'tippy.js/dist/tippy.css';
 
 import micOnIcon from '../../assets/mic_on.png';
 import micOffIcon from '../../assets/mic_off.png';
@@ -56,6 +58,106 @@ function LockIcon() {
                 r="1.2"
                 fill="#1e1f22"
             />
+        </svg>
+    );
+}
+
+function LeaveAllIcon() {
+    return (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+                d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+            <path
+                d="M17 15l4-3-4-3M21 12H9"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
+
+function ScreenShareIcon() {
+    return (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="12" rx="2" stroke="currentColor" strokeWidth="2" />
+            <path d="M8 20h8M12 16v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <path
+                d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
+
+function SystemAudioIcon() {
+    return (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 9v6h4l5 4V5L8 9H4Z" fill="currentColor" />
+            <path
+                d="M14.5 9.5a4 4 0 0 1 0 5"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+            />
+            <path
+                d="M20 5l-3 3m3-3h-3m3 0v3"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
+
+function VoiceModIcon() {
+    return (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+                d="M3.5 13h2l2-5 3 10 3-14 2 9h2.5"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+            <path
+                d="M19 4.2l.6 1.4L21 6.2l-1.4.6L19 8.2l-.6-1.4L17 6.2l1.4-.6L19 4.2Z"
+                fill="currentColor"
+            />
+        </svg>
+    );
+}
+
+function SoundEffectsIcon() {
+    return (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M13 3 6 14h5l-1 7 7-11h-5l1-7Z" fill="currentColor" />
+        </svg>
+    );
+}
+
+function MusicIcon() {
+    return (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+                d="M9 18V5l10-2v13"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+            <circle cx="6.5" cy="18" r="2.5" fill="currentColor" />
+            <circle cx="16.5" cy="16" r="2.5" fill="currentColor" />
         </svg>
     );
 }
@@ -291,8 +393,6 @@ function App() {
     const [currentUserId, setCurrentUserId] = useState(null);
     const [currentUser, setCurrentUser] = useState(null);
     const [activeCalls, setActiveCalls] = useState(emptyActiveCalls);
-    const [logs, setLogs] = useState([]);
-    const logAreaRef = useRef(null);
 
     const [mics, setMics] = useState([]);
     const [selectedMicId, setSelectedMicId] = useState(() => {
@@ -470,7 +570,6 @@ function App() {
                     setCurrentUserId(null);
                 }
             }),
-            api.onLog((line) => setLogs((previous) => [...previous, line]))
         ];
 
         return () => {
@@ -478,10 +577,6 @@ function App() {
             window.discordVoice.stopMicTest?.();
         };
     }, []);
-
-    useEffect(() => {
-        if (logAreaRef.current) logAreaRef.current.scrollTop = logAreaRef.current.scrollHeight;
-    }, [logs]);
 
     async function handleLogout() {
         if (loading) return;
@@ -580,34 +675,8 @@ function App() {
                 <ActiveCallsPanel activeCalls={activeCalls} />
             </section>
 
-            {/* ===== CONTROLES INFERIORES: mute/deafen geral + microfone ===== */}
+            {/* ===== CONTROLES INFERIORES: microfone ===== */}
             <section className="bottom-controls">
-                <div className="global-voice-controls">
-                    <h2>VOZ GERAL</h2>
-                    <div className="global-voice-buttons">
-                        <IconButton
-                            className={activeCalls.allMuted ? 'is-off' : ''}
-                            icon={activeCalls.allMuted ? micOffIcon : micOnIcon}
-                            title={
-                                activeCalls.allMuted
-                                    ? 'Reativar microfone de todas'
-                                    : 'Mutar microfone de todas'
-                            }
-                            onClick={() => window.discordVoice.toggleAllMute()}
-                        />
-                        <IconButton
-                            className={activeCalls.allDeafened ? 'is-off' : ''}
-                            icon={activeCalls.allDeafened ? deafenOnIcon : deafenOffIcon}
-                            title={
-                                activeCalls.allDeafened
-                                    ? 'Reativar áudio de todas'
-                                    : 'Ensurdecer todas'
-                            }
-                            onClick={() => window.discordVoice.toggleAllDeafen()}
-                        />
-                    </div>
-                </div>
-
                 <section className="mic-section" aria-labelledby="micTitle">
                     <h2 id="micTitle">MICROFONE</h2>
                     <div className="mic-area">
@@ -681,10 +750,7 @@ function App() {
                 </section>
             </section>
 
-            <section className="log-section" aria-labelledby="logTitle">
-                <h2 id="logTitle">LOGS</h2>
-                <pre ref={logAreaRef} className="log-area">{logs.join('\n')}</pre>
-            </section>
+            <ActionToolbar activeCalls={activeCalls} />
         </main>
     );
 }
@@ -1263,6 +1329,114 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
                 </div>
             ) : null}
         </div>
+    );
+}
+
+function ToolbarIconButton({ icon, label, onClick, active = false, danger = false, disabled = false, placeholder = false }) {
+    const buttonRef = useRef(null);
+
+    useEffect(() => {
+        if (!buttonRef.current) return undefined;
+
+        const instance = tippy(buttonRef.current, {
+            content: label,
+            placement: 'top',
+            theme: 'discord-voice',
+            animation: 'shift-away',
+            delay: [200, 0],
+            arrow: true
+        });
+
+        return () => instance.destroy();
+    }, [label]);
+
+    return (
+        <button
+            ref={buttonRef}
+            type="button"
+            className={[
+                'toolbar-icon-button',
+                active ? 'is-active' : '',
+                danger ? 'is-danger' : '',
+                placeholder ? 'is-placeholder' : ''
+            ].filter(Boolean).join(' ')}
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+        >
+            {icon}
+        </button>
+    );
+}
+
+function ActionToolbar({ activeCalls }) {
+    const hasActiveCalls = activeCalls.calls.length > 0;
+
+    // Funcionalidades ainda não implementadas — os botões existem apenas
+    // como placeholder visual por enquanto.
+    const noop = () => { };
+
+    return (
+        <section className="action-toolbar" aria-label="Ações rápidas">
+            <ToolbarIconButton
+                icon={<img src={activeCalls.allMuted ? micOffIcon : micOnIcon} alt="" />}
+                label={activeCalls.allMuted ? 'Reativar microfone de todas as calls' : 'Mutar microfone de todas as calls'}
+                active={activeCalls.allMuted}
+                onClick={() => window.discordVoice.toggleAllMute()}
+            />
+
+            <ToolbarIconButton
+                icon={<img src={activeCalls.allDeafened ? deafenOnIcon : deafenOffIcon} alt="" />}
+                label={activeCalls.allDeafened ? 'Reativar áudio de todas as calls' : 'Ensurdecer todas as calls'}
+                active={activeCalls.allDeafened}
+                onClick={() => window.discordVoice.toggleAllDeafen()}
+            />
+
+            <ToolbarIconButton
+                icon={<LeaveAllIcon />}
+                label={hasActiveCalls ? 'Sair de todas as calls' : 'Nenhuma call ativa'}
+                danger
+                disabled={!hasActiveCalls}
+                onClick={() => window.discordVoice.leaveAllCalls()}
+            />
+
+            <span className="toolbar-divider" aria-hidden="true" />
+
+            <ToolbarIconButton
+                icon={<ScreenShareIcon />}
+                label="Compartilhar tela (em breve)"
+                placeholder
+                onClick={noop}
+            />
+
+            <ToolbarIconButton
+                icon={<SystemAudioIcon />}
+                label="Compartilhar áudio do sistema (em breve)"
+                placeholder
+                onClick={noop}
+            />
+
+            <ToolbarIconButton
+                icon={<VoiceModIcon />}
+                label="Voice Mod (em breve)"
+                placeholder
+                onClick={noop}
+            />
+
+            <ToolbarIconButton
+                icon={<SoundEffectsIcon />}
+                label="Efeitos sonoros (em breve)"
+                placeholder
+                onClick={noop}
+            />
+
+            <ToolbarIconButton
+                icon={<MusicIcon />}
+                label="Música (em breve)"
+                placeholder
+                onClick={noop}
+            />
+        </section>
     );
 }
 

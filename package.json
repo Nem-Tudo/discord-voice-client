@@ -23,6 +23,7 @@
     "audify": "^1.10.1",
     "dgram": "^1.0.1",
     "opus-decoder": "^0.7.11",
+    "tippy.js": "^6.3.7",
     "ws": "^8.21.3"
   },
   "devDependencies": {

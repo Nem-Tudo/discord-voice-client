@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     leaveCall(guildId) {
         return ipcRenderer.invoke('voice:leave-call', { guildId });
     },
+    leaveAllCalls() {
+        return ipcRenderer.invoke('voice:leave-all-calls');
+    },
     toggleCallMute(guildId) {
         return ipcRenderer.invoke('voice:set-call-mute', { guildId });
     },
