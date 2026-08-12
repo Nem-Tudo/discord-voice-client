@@ -627,6 +627,25 @@ input:disabled {
     background: #5b5d66;
 }
 
+.toolbar-icon-button.speaking-priority-active {
+    color: #fff;
+    background: #5865f2;
+}
+
+.toolbar-icon-button.speaking-priority-active:hover:not(:disabled) {
+    background: #4752c4;
+}
+
+.toolbar-icon-button.speaking-priority-inactive {
+    color: #dbdee1;
+    background: #4e5058;
+}
+
+.toolbar-icon-button.speaking-priority-inactive:hover:not(:disabled) {
+    color: #fff;
+    background: #5b5d66;
+}
+
 .toolbar-icon-button.is-danger {
     background-color: #f23f42;
     color: #fff;

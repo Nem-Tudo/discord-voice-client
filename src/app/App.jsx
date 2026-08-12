@@ -61,6 +61,59 @@ function LockIcon() {
         </svg>
     );
 }
+function SpeakingPriorityIcon() {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+        >
+            {/* Pessoa */}
+            <circle
+                cx="8"
+                cy="7"
+                r="3"
+                fill="currentColor"
+            />
+            <path
+                d="M2.5 19.5C2.5 15.91 4.96 13.5 8 13.5C11.04 13.5 13.5 15.91 13.5 19.5"
+                fill="currentColor"
+            />
+
+            {/* Ondas de fala */}
+            <path
+                d="M15.5 8.5C16.8 9.25 17.5 10.55 17.5 12"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+            />
+            <path
+                d="M18.5 6.5C20.3 7.8 21.5 9.75 21.5 12"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+            />
+
+            {/* Seta indicando prioridade */}
+            <path
+                d="M16 16.5H21"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+            />
+            <path
+                d="M18.5 14L21 16.5L18.5 19"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
 
 function LeaveAllIcon() {
     return (
@@ -394,6 +447,11 @@ function App() {
     const [currentUser, setCurrentUser] = useState(null);
     const [activeCalls, setActiveCalls] = useState(emptyActiveCalls);
 
+    const [speakingPriorityEnabled, setSpeakingPriorityEnabled] = useState(() => {
+        const saved = localStorage.getItem('speakingPriorityEnabled');
+        return saved === null ? true : saved === 'true';
+    });
+
     const [mics, setMics] = useState([]);
     const [selectedMicId, setSelectedMicId] = useState(() => {
         const saved = localStorage.getItem('selectedMicId');
@@ -578,6 +636,14 @@ function App() {
         };
     }, []);
 
+    const toggleSpeakingPriority = () => {
+        setSpeakingPriorityEnabled((current) => {
+            const next = !current;
+            localStorage.setItem('speakingPriorityEnabled', String(next));
+            return next;
+        });
+    };
+
     async function handleLogout() {
         if (loading) return;
 
@@ -671,7 +737,7 @@ function App() {
                     activeCalls={activeCalls}
                     onSelect={setSelectedGuildId}
                 />
-                <ChannelsPanel guild={selectedGuild} currentUserId={currentUserId} activeCalls={activeCalls} />
+                <ChannelsPanel guild={selectedGuild} currentUserId={currentUserId} activeCalls={activeCalls} speakingPriorityEnabled={speakingPriorityEnabled} />
                 <ActiveCallsPanel activeCalls={activeCalls} />
             </section>
 
@@ -750,7 +816,11 @@ function App() {
                 </section>
             </section>
 
-            <ActionToolbar activeCalls={activeCalls} />
+            <ActionToolbar
+                activeCalls={activeCalls}
+                speakingPriorityEnabled={speakingPriorityEnabled}
+                onToggleSpeakingPriority={toggleSpeakingPriority}
+            />
         </main>
     );
 }
@@ -913,7 +983,7 @@ function CategoryHeader({ name, collapsed, onClick }) {
     );
 }
 
-function ChannelsPanel({ guild, currentUserId, activeCalls }) {
+function ChannelsPanel({ guild, currentUserId, activeCalls, speakingPriorityEnabled }) {
     const [query, setQuery] = useState('');
     const [collapsedCategories, setCollapsedCategories] = useState(
         new Set()
@@ -1088,6 +1158,7 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
                                             channel={channel}
                                             activeCalls={activeCalls}
                                             currentUserId={currentUserId}
+                                            speakingPriorityEnabled={speakingPriorityEnabled}
                                         />
                                     ))}
                                 </div>
@@ -1100,7 +1171,7 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
     );
 }
 
-function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
+function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPriorityEnabled }) {
     const active = activeEntryForChannel(
         activeCalls,
         guild.id,
@@ -1122,18 +1193,19 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
     const members = Object.values(guild.voiceStates)
         .filter((state) => state.channel_id === channel.id)
         .sort((a, b) => {
-            // Prioridade visual: Live > câmera > falando > nome.
             const priorityA =
                 (a.self_stream ? 4 : 0) +
                 (a.self_video ? 2 : 0) +
-                (a.speaking ? 1 : 0);
+                (speakingPriorityEnabled && a.speaking ? 1 : 0);
 
             const priorityB =
                 (b.self_stream ? 4 : 0) +
                 (b.self_video ? 2 : 0) +
-                (b.speaking ? 1 : 0);
+                (speakingPriorityEnabled && b.speaking ? 1 : 0);
 
-            if (priorityA !== priorityB) return priorityB - priorityA;
+            if (priorityA !== priorityB) {
+                return priorityB - priorityA;
+            }
 
             const userA = getStateUser(guild, a);
             const userB = getStateUser(guild, b);
@@ -1373,37 +1445,64 @@ function ToolbarIconButton({ icon, label, onClick, active = false, danger = fals
 function NoiseSuppressionIcon() {
     return (
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
     );
 }
 
-function ActionToolbar({ activeCalls }) {
+function ActionToolbar({
+    activeCalls,
+    speakingPriorityEnabled,
+    onToggleSpeakingPriority
+}) {
     const hasActiveCalls = activeCalls.calls.length > 0;
-
-    // Funcionalidades ainda não implementadas — os botões existem apenas
-    // como placeholder visual por enquanto.
     const noop = () => { };
 
     return (
         <section className="action-toolbar" aria-label="Ações rápidas">
             <ToolbarIconButton
-                icon={<img src={activeCalls.allMuted ? micOffIcon : micOnIcon} alt="" />}
-                label={activeCalls.allMuted ? 'Reativar microfone de todas as calls' : 'Mutar microfone de todas as calls'}
+                icon={
+                    <img
+                        src={activeCalls.allMuted ? micOffIcon : micOnIcon}
+                        alt=""
+                    />
+                }
+                label={
+                    activeCalls.allMuted
+                        ? 'Reativar microfone de todas as calls'
+                        : 'Mutar microfone de todas as calls'
+                }
                 active={activeCalls.allMuted}
                 onClick={() => window.discordVoice.toggleAllMute()}
             />
 
             <ToolbarIconButton
-                icon={<img src={activeCalls.allDeafened ? deafenOnIcon : deafenOffIcon} alt="" />}
-                label={activeCalls.allDeafened ? 'Reativar áudio de todas as calls' : 'Ensurdecer todas as calls'}
+                icon={
+                    <img
+                        src={
+                            activeCalls.allDeafened
+                                ? deafenOnIcon
+                                : deafenOffIcon
+                        }
+                        alt=""
+                    />
+                }
+                label={
+                    activeCalls.allDeafened
+                        ? 'Reativar áudio de todas as calls'
+                        : 'Ensurdecer todas as calls'
+                }
                 active={activeCalls.allDeafened}
                 onClick={() => window.discordVoice.toggleAllDeafen()}
             />
 
             <ToolbarIconButton
                 icon={<LeaveAllIcon />}
-                label={hasActiveCalls ? 'Sair de todas as calls' : 'Nenhuma call ativa'}
+                label={
+                    hasActiveCalls
+                        ? 'Sair de todas as calls'
+                        : 'Nenhuma call ativa'
+                }
                 danger
                 disabled={!hasActiveCalls}
                 onClick={() => window.discordVoice.leaveAllCalls()}
@@ -1427,9 +1526,21 @@ function ActionToolbar({ activeCalls }) {
 
             <ToolbarIconButton
                 icon={<NoiseSuppressionIcon />}
-                label={activeCalls.noiseSuppressionEnabled ? 'Desativar supressão de ruído (RNNoise)' : 'Ativar supressão de ruído (RNNoise)'}
-                className={activeCalls.noiseSuppressionEnabled ? 'noise-suppression-active' : 'noise-suppression-inactive'}
-                onClick={() => window.discordVoice.setNoiseSuppression(!activeCalls.noiseSuppressionEnabled)}
+                label={
+                    activeCalls.noiseSuppressionEnabled
+                        ? 'Desativar supressão de ruído (RNNoise)'
+                        : 'Ativar supressão de ruído (RNNoise)'
+                }
+                className={
+                    activeCalls.noiseSuppressionEnabled
+                        ? 'noise-suppression-active'
+                        : 'noise-suppression-inactive'
+                }
+                onClick={() =>
+                    window.discordVoice.setNoiseSuppression(
+                        !activeCalls.noiseSuppressionEnabled
+                    )
+                }
             />
 
             <ToolbarIconButton
@@ -1451,6 +1562,23 @@ function ActionToolbar({ activeCalls }) {
                 label="Música (em breve)"
                 placeholder
                 onClick={noop}
+            />
+
+            {/* Prioridade por speaking — fica à direita da Música */}
+            <ToolbarIconButton
+                icon={<SpeakingPriorityIcon />}
+                label={
+                    speakingPriorityEnabled
+                        ? 'Desativar ordenação de quem está falando'
+                        : 'Ativar ordenação de quem está falando'
+                }
+                active={speakingPriorityEnabled}
+                className={
+                    speakingPriorityEnabled
+                        ? 'speaking-priority-active'
+                        : 'speaking-priority-inactive'
+                }
+                onClick={onToggleSpeakingPriority}
             />
         </section>
     );
