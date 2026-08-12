@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Voice</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <main class="app-shell">
+        <form id="connectForm" class="fields">
+            <label class="field">
+                <span>Token</span>
+                <input id="tokenInput" type="password" placeholder="Token" autocomplete="off">
+            </label>
+
+            <label class="field">
+                <span>ID do servidor</span>
+                <input id="guildInput" type="text" placeholder="ID do servidor" autocomplete="off">
+            </label>
+
+            <label class="field">
+                <span>ID do canal de voz</span>
+                <input id="channelInput" type="text" placeholder="ID do canal de voz" autocomplete="off">
+            </label>
+
+            <button id="connectBtn" class="connect-button" type="submit">Conectar</button>
+        </form>
+
+        <p id="statusLabel" class="status">Desconectado</p>
+
+        <section class="log-section" aria-labelledby="logTitle">
+            <h2 id="logTitle">Logs</h2>
+            <pre id="logArea" class="log-area"></pre>
+        </section>
+
+        <footer id="controls" class="controls" hidden>
+            <button id="muteBtn" class="icon-button" type="button" title="Mutar/Desmutar Microfone" aria-label="Mutar/Desmutar Microfone">
+                <img id="muteIcon" alt="" src="../assets/mic_on.png">
+            </button>
+
+            <button id="deafenBtn" class="icon-button" type="button" title="Ensurdecer/Reativar Audio" aria-label="Ensurdecer/Reativar Audio">
+                <img id="deafenIcon" alt="" src="../assets/deafen_off.png">
+            </button>
+
+            <button id="disconnectBtn" class="disconnect-button" type="button">Desconectar</button>
+        </footer>
+    </main>
+
+    <script src="./renderer.js"></script>
+</body>
+</html>

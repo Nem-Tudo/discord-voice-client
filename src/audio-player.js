@@ -1,55 +1,26 @@
 'use strict';
 
 const crypto = require('crypto');
+const { OpusDecoder } = require('opus-decoder');
 
-let OpusScript = null;
 let audify = null;
 
 try {
-    OpusScript = require('opusscript');
     audify = require('audify');
 } catch (e) {
-    // Erros de importação são tratados em init()
+    // tratado no init()
 }
 
-/*
- * Discord voice:
- *
- * 48000 Hz
- * 2 canais
- * 20 ms por frame
- *
- * 48000 * 0.020 = 960 samples/channel
- */
 const SAMPLE_RATE = 48000;
 const CHANNELS = 2;
 const FRAME_SAMPLES_PER_CHANNEL = 960;
+const EXPECTED_PCM_SIZE = FRAME_SAMPLES_PER_CHANNEL * CHANNELS * 2; // 3840 bytes (Int16)
 
 class AudioPlayer {
     constructor(onLog) {
         this.log = onLog || console.log;
-
         this.isInitialized = false;
-
-        /*
-         * IMPORTANTE:
-         *
-         * Cada SSRC (usuário falando) recebe:
-         *
-         *  - seu próprio decoder Opus (stateful, não pode ser
-         *    compartilhado entre usuários diferentes ou o PLC
-         *    quebra e gera artefatos "robóticos")
-         *
-         *  - seu próprio stream de saída RtAudio, independente
-         *    do stream dos outros usuários.
-         *
-         * A mixagem de várias pessoas falando ao mesmo tempo fica
-         * a cargo do próprio sistema operacional (modo compartilhado
-         * do WASAPI/CoreAudio/PulseAudio), que já sabe combinar
-         * múltiplos streams de áudio simultâneos no mesmo dispositivo
-         * sem gerar os artefatos de uma mixagem manual malfeita.
-         */
-        this.userStreams = new Map(); // ssrc -> { decoder, rtAudio }
+        this.userStreams = new Map(); // ssrc -> { decoder, rtAudio, ready }
 
         this.debugFlags = {
             firstPacket: false,
@@ -62,51 +33,41 @@ class AudioPlayer {
     }
 
     init() {
-        if (!OpusScript || !audify) {
-            this.log(
-                '[Áudio-Init] ERRO: Dependências ausentes (opusscript ou audify).'
-            );
+        if (!audify) {
+            this.log('[Áudio-Init] ERRO: Dependência ausente (audify).');
             return false;
         }
 
-        /*
-         * Aqui não abrimos nenhum stream ainda.
-         *
-         * Os streams são criados sob demanda, um por SSRC,
-         * na primeira vez que um pacote daquele usuário chega
-         * (ver _getOrCreateUserStream).
-         *
-         * Isso evita abrir dispositivos de áudio "no vazio"
-         * para usuários que nunca vão falar.
-         */
         this.isInitialized = true;
-
-        this.log(
-            '[Áudio-Init] AudioPlayer pronto (streams por usuário serão criados sob demanda).'
-        );
-
+        this.log('[Áudio-Init] AudioPlayer pronto (usando opus-decoder WASM).');
         return true;
     }
 
     /**
-     * Cria (se ainda não existir) o decoder Opus + stream de saída
-     * dedicados a este SSRC.
+     * Cria decoder + stream de saída para um SSRC
      */
-    _getOrCreateUserStream(ssrc) {
+    async _getOrCreateUserStream(ssrc) {
         let entry = this.userStreams.get(ssrc);
-
         if (entry) {
+            // espera o decoder ficar pronto se ainda não estiver
+            if (!entry.ready) {
+                await entry.readyPromise;
+            }
             return entry;
         }
 
-        const decoder = new OpusScript(
-            SAMPLE_RATE,
-            CHANNELS,
-            OpusScript.Application.AUDIO
-        );
+        const decoder = new OpusDecoder({
+            sampleRate: SAMPLE_RATE,
+            channels: CHANNELS,
+            // forceStereo: true // opcional
+        });
+
+        // Promise que resolve quando o WASM estiver pronto
+        const readyPromise = decoder.ready.then(() => {
+            entry.ready = true;
+        });
 
         const rtAudio = new audify.RtAudio();
-
         rtAudio.openStream(
             {
                 deviceId: rtAudio.getDefaultOutputDevice(),
@@ -119,182 +80,66 @@ class AudioPlayer {
             FRAME_SAMPLES_PER_CHANNEL,
             `DiscordBot-${ssrc}`
         );
-
         rtAudio.start();
 
-        entry = { decoder, rtAudio };
+        entry = {
+            decoder,
+            rtAudio,
+            ready: false,
+            readyPromise
+        };
 
         this.userStreams.set(ssrc, entry);
+        this.log(`[Áudio] Stream de saída criado para SSRC ${ssrc}.`);
 
-        this.log(
-            `[Áudio] Stream de saída criado para SSRC ${ssrc}.`
-        );
+        // espera o decoder ficar pronto na primeira vez
+        await readyPromise;
 
         return entry;
     }
 
-    /**
-     * Descriptografa o transporte RTP do Discord.
-     *
-     * Suporta:
-     *
-     *   aead_aes256_gcm_rtpsize
-     *
-     * Estrutura:
-     *
-     * RTP fixed header
-     * CSRCs
-     * RTP extension preamble (4 bytes)
-     * encrypted extension + DAVE frame
-     * authentication tag (16 bytes)
-     * nonce/counter (4 bytes)
-     *
-     * IMPORTANTE:
-     *
-     * Apenas o RTP header + CSRCs + extension preamble
-     * entram como AAD.
-     *
-     * O conteúdo da extensão RTP NÃO entra no AAD.
-     */
     decryptAesGcmTransport(packet, secretKey) {
-        if (!Buffer.isBuffer(packet)) {
-            throw new Error('Pacote inválido');
-        }
-
+        if (!Buffer.isBuffer(packet)) throw new Error('Pacote inválido');
         if (!Buffer.isBuffer(secretKey) || secretKey.length !== 32) {
-            throw new Error(
-                `Secret key AES inválida (${secretKey?.length ?? 0} bytes)`
-            );
+            throw new Error(`Secret key AES inválida (${secretKey?.length ?? 0} bytes)`);
         }
+        if (packet.length < 12 + 16 + 4) throw new Error('Pacote RTP muito pequeno');
 
-        if (packet.length < 12 + 16 + 4) {
-            throw new Error('Pacote RTP muito pequeno');
-        }
-
-        /*
-         * RTP fixed header = 12 bytes
-         */
         let headerLen = 12;
-
-        /*
-         * CC = número de CSRCs
-         */
         const csrcCount = packet[0] & 0x0f;
-
         headerLen += csrcCount * 4;
 
         if (packet.length < headerLen + 4 + 16 + 4) {
             throw new Error('Pacote RTP truncado');
         }
 
-        /*
-         * RTP extension
-         *
-         * O bit X está no bit 4 do primeiro byte.
-         */
         const hasExtension = (packet[0] & 0x10) !== 0;
-
         let extensionDataLen = 0;
 
         if (hasExtension) {
-            /*
-             * O extension header possui:
-             *
-             * 2 bytes: profile
-             * 2 bytes: length em words de 32 bits
-             */
-            if (packet.length < headerLen + 4) {
-                throw new Error('RTP extension header truncado');
-            }
+            if (packet.length < headerLen + 4) throw new Error('RTP extension header truncado');
 
-            const extensionLengthWords =
-                packet.readUInt16BE(headerLen + 2);
-
+            const extensionLengthWords = packet.readUInt16BE(headerLen + 2);
             extensionDataLen = extensionLengthWords * 4;
-
-            /*
-             * SOMENTE estes 4 bytes ficam no AAD.
-             *
-             * Não avançamos pelo conteúdo da extensão.
-             */
             headerLen += 4;
 
-            /*
-             * Precisamos garantir que a extensão realmente
-             * esteja dentro do ciphertext.
-             */
-            if (
-                packet.length <
-                headerLen +
-                    extensionDataLen +
-                    16 +
-                    4
-            ) {
+            if (packet.length < headerLen + extensionDataLen + 16 + 4) {
                 throw new Error('RTP extension truncada');
             }
         }
 
-        /*
-         * O header usado como AAD.
-         */
         const aad = packet.subarray(0, headerLen);
-
-        /*
-         * Últimos 4 bytes:
-         *
-         * nonce/counter transmitido pelo Discord.
-         */
         const nonce4 = packet.subarray(packet.length - 4);
-
-        /*
-         * AES-256-GCM utiliza nonce de 12 bytes.
-         *
-         * Discord envia 4 bytes e completa o restante
-         * com zero.
-         */
         const nonce = Buffer.alloc(12);
-
         nonce4.copy(nonce, 0);
 
-        /*
-         * Remove nonce.
-         */
-        const encryptedWithTag = packet.subarray(
-            headerLen,
-            packet.length - 4
-        );
+        const encryptedWithTag = packet.subarray(headerLen, packet.length - 4);
+        if (encryptedWithTag.length < 16) throw new Error('Ciphertext sem authentication tag');
 
-        if (encryptedWithTag.length < 16) {
-            throw new Error('Ciphertext sem authentication tag');
-        }
+        const authTag = encryptedWithTag.subarray(encryptedWithTag.length - 16);
+        const ciphertext = encryptedWithTag.subarray(0, encryptedWithTag.length - 16);
 
-        /*
-         * AES-GCM:
-         *
-         * ciphertext + 16-byte authentication tag
-         */
-        const authTag = encryptedWithTag.subarray(
-            encryptedWithTag.length - 16
-        );
-
-        const ciphertext = encryptedWithTag.subarray(
-            0,
-            encryptedWithTag.length - 16
-        );
-
-        const decipher = crypto.createDecipheriv(
-            'aes-256-gcm',
-            secretKey,
-            nonce
-        );
-
-        /*
-         * Ordem importante:
-         *
-         * AAD
-         * AuthTag
-         * decrypt
-         */
+        const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey, nonce);
         decipher.setAAD(aad);
         decipher.setAuthTag(authTag);
 
@@ -303,12 +148,6 @@ class AudioPlayer {
             decipher.final()
         ]);
 
-        /*
-         * plaintext:
-         *
-         * [RTP extension data]
-         * [DAVE encrypted frame]
-         */
         return {
             rtpHeader: aad,
             hasExtension,
@@ -317,78 +156,48 @@ class AudioPlayer {
         };
     }
 
-    /**
-     * Descriptografa o transporte XChaCha20-Poly1305.
-     *
-     * Este método fica separado porque o Discord pode negociar:
-     *
-     * aead_xchacha20_poly1305_rtpsize
-     *
-     * Caso esse modo seja negociado, o chamador deve utilizar
-     * esta função em vez da AES-GCM.
-     *
-     * O suporte depende da API disponível na versão do Node/OpenSSL.
-     */
-    decryptXChaChaTransport(packet, secretKey) {
-        throw new Error(
-            'aead_xchacha20_poly1305_rtpsize foi negociado, ' +
-            'mas XChaCha20-Poly1305 não está implementado neste AudioPlayer.'
-        );
+    decryptXChaChaTransport() {
+        throw new Error('aead_xchacha20_poly1305_rtpsize não implementado');
     }
 
-    /**
-     * Remove RTP padding.
-     *
-     * O padding é indicado pelo bit P do primeiro byte RTP.
-     */
     removeRtpPadding(packet, hasPadding) {
-        if (!hasPadding) {
-            return packet;
-        }
-
-        if (!packet || packet.length === 0) {
-            throw new Error('Payload vazio com padding RTP');
-        }
+        if (!hasPadding) return packet;
+        if (!packet || packet.length === 0) throw new Error('Payload vazio com padding RTP');
 
         const paddingLength = packet[packet.length - 1];
-
-        if (
-            paddingLength === 0 ||
-            paddingLength > packet.length
-        ) {
-            throw new Error(
-                `Padding RTP inválido: ${paddingLength}`
-            );
+        if (paddingLength === 0 || paddingLength > packet.length) {
+            throw new Error(`Padding RTP inválido: ${paddingLength}`);
         }
 
-        return packet.subarray(
-            0,
-            packet.length - paddingLength
-        );
+        return packet.subarray(0, packet.length - paddingLength);
     }
 
     /**
-     * Processa um pacote UDP recebido do Discord.
-     *
-     * Fluxo:
-     *
-     * UDP
-     *  ↓
-     * RTP
-     *  ↓
-     * AES-GCM
-     *  ↓
-     * RTP extension
-     *  ↓
-     * DAVE
-     *  ↓
-     * Opus (decoder por-SSRC)
-     *  ↓
-     * PCM
-     *  ↓
-     * speaker (stream por-SSRC — mixagem feita pelo SO)
+     * Converte Float32 planar → Int16 interleaved
      */
-    processPacket(
+    float32ToInt16(channelData, samplesDecoded) {
+        const pcm = Buffer.alloc(samplesDecoded * CHANNELS * 2);
+        let offset = 0;
+
+        for (let i = 0; i < samplesDecoded; i++) {
+            for (let ch = 0; ch < CHANNELS; ch++) {
+                let sample = channelData[ch][i];
+
+                // clamp
+                if (sample > 1.0) sample = 1.0;
+                if (sample < -1.0) sample = -1.0;
+
+                // Float32 → Int16
+                const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                pcm.writeInt16LE(Math.round(int16), offset);
+                offset += 2;
+            }
+        }
+
+        return pcm;
+    }
+
+    async processPacket(
         msg,
         daveSession,
         isDeafened,
@@ -396,338 +205,159 @@ class AudioPlayer {
         secretKey,
         encryptionMode = 'aead_aes256_gcm_rtpsize'
     ) {
-        if (!Buffer.isBuffer(msg)) {
-            return;
-        }
+        if (!Buffer.isBuffer(msg) || msg.length < 12) return;
 
-        /*
-         * RTP mínimo.
-         */
-        if (msg.length < 12) {
-            return;
-        }
-
-        /*
-         * Primeiro byte RTP:
-         *
-         * V = bits 7-6
-         *
-         * Versão RTP deve ser 2.
-         */
         const version = msg[0] >> 6;
+        if (version !== 2) return;
 
-        if (version !== 2) {
-            return;
-        }
+        if (isDeafened || !daveSession || !this.isInitialized || !secretKey) return;
 
-        if (
-            isDeafened ||
-            !daveSession ||
-            !this.isInitialized ||
-            !secretKey
-        ) {
-            return;
-        }
-
-        /*
-         * Payload Type.
-         *
-         * Discord normalmente usa 120 para Opus.
-         */
         const payloadType = msg[1] & 0x7f;
+        if (payloadType !== 120) return;
 
-        if (payloadType !== 120) {
-            return;
-        }
-
-        /*
-         * SSRC = bytes 8-11.
-         */
         const ssrc = msg.readUInt32BE(8);
-
         const userId = ssrcMap.get(ssrc);
-
-        if (!userId) {
-            return;
-        }
+        if (!userId) return;
 
         if (!this.debugFlags.firstPacket) {
-            this.log(
-                `[Áudio-Debug] (1/4) Primeiro pacote recebido ` +
-                `do usuário SSRC: ${ssrc}!`
-            );
-
+            this.log(`[Áudio-Debug] (1/4) Primeiro pacote recebido do usuário SSRC: ${ssrc}!`);
             this.debugFlags.firstPacket = true;
         }
 
-        /*
-         * RTP padding.
-         */
         const hasPadding = (msg[0] & 0x20) !== 0;
 
         try {
-            /*
-             * ======================================================
-             * 1. TRANSPORT DECRYPTION
-             * ======================================================
-             */
+            // 1. TRANSPORT DECRYPT
             let transport;
-
             try {
-                switch (encryptionMode) {
-                    case 'aead_aes256_gcm_rtpsize':
-                        transport =
-                            this.decryptAesGcmTransport(
-                                msg,
-                                secretKey
-                            );
-                        break;
-
-                    case 'aead_xchacha20_poly1305_rtpsize':
-                        transport =
-                            this.decryptXChaChaTransport(
-                                msg,
-                                secretKey
-                            );
-                        break;
-
-                    default:
-                        throw new Error(
-                            `Modo de criptografia não suportado: ${encryptionMode}`
-                        );
+                if (encryptionMode === 'aead_aes256_gcm_rtpsize') {
+                    transport = this.decryptAesGcmTransport(msg, secretKey);
+                } else {
+                    throw new Error(`Modo não suportado: ${encryptionMode}`);
                 }
             } catch (e) {
                 if (!this.debugFlags.transportError) {
-                    this.log(
-                        `[Áudio-Debug] (1.5/4) ERRO TRANSPORTE ` +
-                        `(${encryptionMode}): ${e.message}`
-                    );
-
+                    this.log(`[Áudio-Debug] (1.5/4) ERRO TRANSPORTE: ${e.message}`);
                     this.debugFlags.transportError = true;
                 }
-
                 return;
             }
 
-            /*
-             * ======================================================
-             * 2. REMOVE RTP EXTENSION
-             * ======================================================
-             *
-             * Depois do transporte:
-             *
-             * plaintext =
-             *
-             * [RTP extension data]
-             * [DAVE frame]
-             */
+            // 2. REMOVE RTP EXTENSION
             let mediaPayload = transport.plaintext;
-
             if (transport.extensionDataLen > 0) {
-                if (
-                    mediaPayload.length <
-                    transport.extensionDataLen
-                ) {
-                    throw new Error(
-                        'Payload menor que RTP extension'
-                    );
+                if (mediaPayload.length < transport.extensionDataLen) {
+                    throw new Error('Payload menor que RTP extension');
                 }
-
-                mediaPayload = mediaPayload.subarray(
-                    transport.extensionDataLen
-                );
+                mediaPayload = mediaPayload.subarray(transport.extensionDataLen);
             }
 
-            /*
-             * ======================================================
-             * 3. REMOVE RTP PADDING
-             * ======================================================
-             */
-            mediaPayload = this.removeRtpPadding(
-                mediaPayload,
-                hasPadding
-            );
-
+            // 3. REMOVE PADDING
+            mediaPayload = this.removeRtpPadding(mediaPayload, hasPadding);
             if (!mediaPayload || mediaPayload.length === 0) {
                 if (!this.debugFlags.decryptEmpty) {
-                    this.log(
-                        '[Áudio-Debug] (2/4) ERRO: frame DAVE vazio.'
-                    );
-
+                    this.log('[Áudio-Debug] (2/4) ERRO: frame DAVE vazio.');
                     this.debugFlags.decryptEmpty = true;
                 }
-
                 return;
             }
 
-            /*
-             * ======================================================
-             * 4. DAVE DECRYPTION
-             * ======================================================
-             *
-             * IMPORTANTE:
-             *
-             * O DAVE recebe o frame de mídia.
-             *
-             * Não passamos:
-             *
-             * - RTP header
-             * - RTP extension
-             * - nonce
-             * - AES tag
-             */
+            // 4. DAVE DECRYPT
             let opusFrame;
-
             try {
-                /*
-                 * O segundo argumento representa o tipo de mídia.
-                 *
-                 * Para áudio:
-                 *
-                 * 0 = audio
-                 */
-                opusFrame = daveSession.decrypt(
-                    userId,
-                    0,
-                    mediaPayload
-                );
+                opusFrame = daveSession.decrypt(userId, 0, mediaPayload);
 
-                if (
-                    !opusFrame ||
-                    !Buffer.isBuffer(opusFrame) ||
-                    opusFrame.length === 0
-                ) {
+                if (!opusFrame || !Buffer.isBuffer(opusFrame) || opusFrame.length === 0) {
                     if (!this.debugFlags.decryptEmpty) {
-                        this.log(
-                            '[Áudio-Debug] (2/4) ERRO: DAVE retornou vazio.'
-                        );
-
+                        this.log('[Áudio-Debug] (2/4) ERRO: DAVE retornou vazio.');
                         this.debugFlags.decryptEmpty = true;
                     }
-
                     return;
                 }
             } catch (e) {
                 if (!this.debugFlags.decryptError) {
-                    this.log(
-                        `[Áudio-Debug] (2/4) ERRO FATAL DAVE: ${e.message}`
-                    );
-
+                    this.log(`[Áudio-Debug] (2/4) ERRO FATAL DAVE: ${e.message}`);
                     this.debugFlags.decryptError = true;
                 }
-
                 return;
             }
 
-            /*
-             * ======================================================
-             * 5. OPUS -> PCM (decoder por-SSRC)
-             * ======================================================
-             */
-            const { decoder, rtAudio } =
-                this._getOrCreateUserStream(ssrc);
+            // Proteção de tamanho
+            if (opusFrame.length < 3 || opusFrame.length > 1500) return;
+
+            // 5. OPUS → PCM (usando opus-decoder)
+            const { decoder, rtAudio } = await this._getOrCreateUserStream(ssrc);
 
             let pcmData;
-
             try {
-                pcmData = decoder.decode(opusFrame);
+                // opus-decoder espera Uint8Array
+                const result = decoder.decodeFrame(opusFrame);
 
-                if (!pcmData || pcmData.length === 0) {
+                if (!result || !result.channelData || result.samplesDecoded === 0) {
                     if (!this.debugFlags.decodeError) {
-                        this.log(
-                            '[Áudio-Debug] (3/4) Opus retornou PCM vazio.'
-                        );
-
+                        this.log('[Áudio-Debug] (3/4) Opus retornou PCM vazio.');
                         this.debugFlags.decodeError = true;
                     }
-
                     return;
+                }
+
+                // Converte Float32 planar → Int16 interleaved
+                pcmData = this.float32ToInt16(result.channelData, result.samplesDecoded);
+
+                // Garante tamanho esperado (pode variar um pouco)
+                if (pcmData.length > EXPECTED_PCM_SIZE) {
+                    pcmData = pcmData.subarray(0, EXPECTED_PCM_SIZE);
                 }
             } catch (e) {
                 if (!this.debugFlags.decodeError) {
-                    this.log(
-                        `[Áudio-Debug] (3/4) ERRO OPUS: ${e.message}`
-                    );
-
+                    this.log(`[Áudio-Debug] (3/4) ERRO OPUS: ${e.message}`);
                     this.debugFlags.decodeError = true;
                 }
-
                 return;
             }
 
-            /*
-             * ======================================================
-             * 6. PCM -> SPEAKER (stream dedicado deste usuário)
-             * ======================================================
-             */
+            // 6. PCM → SPEAKER
             try {
                 rtAudio.write(pcmData);
             } catch (e) {
                 if (!this.debugFlags.speakerError) {
-                    this.log(
-                        `[Áudio-Debug] (4/4) ERRO HARDWARE (SSRC ${ssrc}): ${e.message}`
-                    );
-
+                    this.log(`[Áudio-Debug] (4/4) ERRO HARDWARE (SSRC ${ssrc}): ${e.message}`);
                     this.debugFlags.speakerError = true;
                 }
             }
 
         } catch (err) {
-            this.log(
-                `[Áudio-Debug] Erro genérico inesperado: ${err.message}`
-            );
+            this.log(`[Áudio-Debug] Erro genérico inesperado: ${err.message}`);
         }
     }
 
-    /**
-     * Chamado quando um usuário sai do canal de voz (ver
-     * VoiceOp.CLIENT_DISCONNECT em discord-voice.js).
-     *
-     * Fecha o stream de saída e libera o decoder Opus dedicados
-     * a este SSRC, evitando vazamento de dispositivos de áudio
-     * abertos e memória de usuários que já saíram da call.
-     */
     releaseSsrc(ssrc) {
         const entry = this.userStreams.get(ssrc);
-
-        if (!entry) {
-            return;
-        }
+        if (!entry) return;
 
         const { decoder, rtAudio } = entry;
 
         try {
-            decoder.delete();
-        } catch (e) {
-            // Ignorado
-        }
+            decoder.free();
+        } catch (_) { }
 
         try {
             rtAudio.stop();
-        } catch (e) {
-            // Ignorado
-        }
+        } catch (_) { }
 
         try {
             rtAudio.closeStream();
-        } catch (e) {
-            // Ignorado
-        }
+        } catch (_) { }
 
         this.userStreams.delete(ssrc);
-
-        this.log(
-            `[Áudio] Stream de saída encerrado para SSRC ${ssrc}.`
-        );
+        this.log(`[Áudio] Stream de saída encerrado para SSRC ${ssrc}.`);
     }
 
     destroy() {
         for (const ssrc of Array.from(this.userStreams.keys())) {
             this.releaseSsrc(ssrc);
         }
-
         this.userStreams.clear();
-
         this.isInitialized = false;
 
         for (const key in this.debugFlags) {
@@ -736,6 +366,4 @@ class AudioPlayer {
     }
 }
 
-module.exports = {
-    AudioPlayer
-};
+module.exports = { AudioPlayer };
