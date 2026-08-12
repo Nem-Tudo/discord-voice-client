@@ -53,5 +53,10 @@ contextBridge.exposeInMainWorld('discordVoice', {
     },
     onActiveCalls(callback) {
         return subscribe('voice:active-calls', callback);
-    }
+    },
+    listMics: () => ipcRenderer.invoke('voice:list-mics'),
+    setMic: (deviceId) => ipcRenderer.invoke('voice:set-mic', deviceId),
+    setMicGain: (percent) => ipcRenderer.invoke('voice:set-mic-gain', percent),
+    startMicTest: (deviceId) => ipcRenderer.invoke('voice:start-mic-test', deviceId),
+    stopMicTest: () => ipcRenderer.invoke('voice:stop-mic-test'),
 });

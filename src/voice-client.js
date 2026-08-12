@@ -4,6 +4,7 @@ const WebSocket = require('ws');
 const dgram = require('dgram');
 
 const { AudioPlayer } = require('./audio-player');
+const { AudioSender } = require('./audio-sender');
 
 let Davey = null;
 
@@ -59,6 +60,8 @@ function createVoiceClient({
     token,
     guildId,
     channelId,
+    deviceId = null,
+    gainPercent = 100,
     onLog,
     onGatewayReady,
     onGuildCreate,
@@ -71,6 +74,12 @@ function createVoiceClient({
             onLog(msg);
         }
     };
+
+    const audioSender = new AudioSender(log);
+
+    // Preferências de microfone (podem ser alteradas antes ou depois do init)
+    let preferredDeviceId = deviceId ?? null;
+    let preferredGainPercent = Math.max(0, Math.min(2000, Number(gainPercent) || 100));
 
 
     // ============================================================
@@ -322,8 +331,8 @@ function createVoiceClient({
 
                 properties: {
                     os: process.platform,
-                    browser: 'custom-voice-bot',
-                    device: 'custom-voice-bot'
+                    browser: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9251 Chrome/148.0.7778.280 Electron/42.7.1 Safari/537.36',
+                    device: 'Windows'
                 }
             }
         );
@@ -766,6 +775,27 @@ function createVoiceClient({
                     audioPlayer.init();
                 }
 
+                // Inicializa o sender (microfone) com device + ganho
+                if (!audioSender.isInitialized) {
+                    audioSender.init({
+                        ssrc,
+                        udpSocket,
+                        voiceIp,
+                        voicePort,
+                        secretKey: voiceSecretKey,
+                        encryptionMode: voiceEncryptionMode,
+                        daveSession,
+                        botUserId,
+                        sendVoice,
+                        deviceId: preferredDeviceId,
+                        gainPercent: preferredGainPercent
+                    });
+                } else {
+                    // Já inicializado (reconexão rara): aplica preferências atuais
+                    audioSender.setDevice(preferredDeviceId);
+                    audioSender.setGain(preferredGainPercent);
+                }
+
                 if (onReady) {
                     onReady();
                 }
@@ -814,7 +844,7 @@ function createVoiceClient({
 
                     for (const [mappedSsrc, mappedUserId] of ssrcMap) {
                         if (mappedUserId === userId) {
-                            audioPlayer.releaseSsrc(mappedSsrc); // <-- adicionar
+                            audioPlayer.releaseSsrc(mappedSsrc);
                             ssrcMap.delete(mappedSsrc);
                         }
                     }
@@ -1176,10 +1206,15 @@ function createVoiceClient({
                         welcomeData
                     );
 
+
                     log(
                         `[DAVE] MLS welcome processado ` +
                         `(transition=${transitionId}).`
                     );
+
+                    if (typeof audioSender.setDaveSession === 'function') {
+                        audioSender.setDaveSession(daveSession);
+                    }
 
                     if (transitionId !== 0) {
                         davePendingTransitions.set(
@@ -1632,6 +1667,7 @@ function createVoiceClient({
         /*
          * Desliga áudio.
          */
+        audioSender.destroy();
         audioPlayer.destroy();
 
 
@@ -1761,6 +1797,45 @@ function createVoiceClient({
                     self_deaf: selfDeaf
                 }
             );
+        },
+
+        listMics() {
+            return AudioSender.listInputDevices();
+        },
+
+        setMic(deviceId) {
+            preferredDeviceId = deviceId ?? null;
+            audioSender.setDevice(preferredDeviceId);
+        },
+
+        /**
+         * Define o ganho do microfone (0–2000%).
+         * 100 = volume normal.
+         */
+        setMicGain(percent) {
+            preferredGainPercent = Math.max(0, Math.min(2000, Number(percent) || 0));
+            audioSender.setGain(preferredGainPercent);
+        },
+
+        /** Alias de setMicGain (usado pelo main.js) */
+        setGain(percent) {
+            this.setMicGain(percent);
+        },
+
+        startMic() {
+            audioSender.startSpeaking();
+        },
+
+        stopMic() {
+            audioSender.stopSpeaking();
+        },
+
+        toggleMic() {
+            if (audioSender.speaking) {
+                this.stopMic();
+            } else {
+                this.startMic();
+            }
         },
 
 

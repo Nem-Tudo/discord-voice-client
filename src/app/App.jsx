@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import micOnIcon from '../assets/mic_on.png';
-import micOffIcon from '../assets/mic_off.png';
-import deafenOnIcon from '../assets/deafen_on.png';
-import deafenOffIcon from '../assets/deafen_off.png';
+import micOnIcon from '../../assets/mic_on.png';
+import micOffIcon from '../../assets/mic_off.png';
+import deafenOnIcon from '../../assets/deafen_on.png';
+import deafenOffIcon from '../../assets/deafen_off.png';
 
 const ADMINISTRATOR = 8n;
 const VIEW_CHANNEL = 1024n;
@@ -184,11 +184,87 @@ function App() {
     const [logs, setLogs] = useState([]);
     const logAreaRef = useRef(null);
 
+    // ===== MICROFONE =====
+    const [mics, setMics] = useState([]);
+    const [selectedMicId, setSelectedMicId] = useState(() => {
+        const saved = localStorage.getItem('selectedMicId');
+        if (saved === null || saved === '') return null;
+        const n = Number(saved);
+        return Number.isNaN(n) ? null : n;
+    });
+    const [testingMic, setTestingMic] = useState(false);
+
+    // Ganho: 0–2000% (100 = normal)
+    const [micGain, setMicGain] = useState(() => {
+        const saved = localStorage.getItem('micGain');
+        if (saved === null || saved === '') return 100;
+        const n = Number(saved);
+        if (Number.isNaN(n)) return 100;
+        return Math.max(0, Math.min(2000, Math.round(n)));
+    });
+
     const sortedGuilds = useMemo(
         () => Object.values(guilds).sort((a, b) => a.name.localeCompare(b.name)),
         [guilds]
     );
     const selectedGuild = selectedGuildId ? guilds[selectedGuildId] : null;
+
+    const refreshMics = async () => {
+        try {
+            const list = await window.discordVoice.listMics?.();
+            if (Array.isArray(list)) {
+                setMics(list);
+
+                if (selectedMicId === null) {
+                    const defaultMic = list.find((m) => m.isDefault);
+                    if (defaultMic) {
+                        setSelectedMicId(defaultMic.id);
+                        localStorage.setItem('selectedMicId', String(defaultMic.id));
+                        window.discordVoice.setMic?.(defaultMic.id);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Erro ao listar microfones:', err);
+        }
+    };
+
+    useEffect(() => {
+        refreshMics();
+        // aplica ganho salvo ao carregar
+        window.discordVoice.setMicGain?.(micGain);
+    }, []);
+
+    const handleMicChange = (event) => {
+        const value = event.target.value;
+        const id = value === '' ? null : Number(value);
+
+        setSelectedMicId(id);
+        localStorage.setItem('selectedMicId', id === null ? '' : String(id));
+        window.discordVoice.setMic?.(id);
+
+        if (testingMic) {
+            window.discordVoice.stopMicTest?.();
+            window.discordVoice.startMicTest?.(id);
+        }
+    };
+
+    const handleGainChange = (event) => {
+        const value = Math.max(0, Math.min(2000, Number(event.target.value) || 0));
+        setMicGain(value);
+        localStorage.setItem('micGain', String(value));
+        window.discordVoice.setMicGain?.(value);
+    };
+
+    const toggleMicTest = () => {
+        if (testingMic) {
+            window.discordVoice.stopMicTest?.();
+            setTestingMic(false);
+        } else {
+            window.discordVoice.startMicTest?.(selectedMicId);
+            setTestingMic(true);
+        }
+    };
 
     useEffect(() => {
         const api = window.discordVoice;
@@ -248,7 +324,10 @@ function App() {
             api.onLog((line) => setLogs((previous) => [...previous, line]))
         ];
 
-        return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+        return () => {
+            unsubscribers.forEach((unsubscribe) => unsubscribe());
+            window.discordVoice.stopMicTest?.();
+        };
     }, []);
 
     useEffect(() => {
@@ -282,6 +361,7 @@ function App() {
                         onChange={(event) => setToken(event.target.value)}
                     />
                 </label>
+
                 <button className="primary-button" type="submit" disabled={loading}>
                     {loading ? 'Carregando...' : sortedGuilds.length ? 'Atualizar servidores' : 'Logar'}
                 </button>
@@ -298,6 +378,87 @@ function App() {
                 />
                 <ChannelsPanel guild={selectedGuild} currentUserId={currentUserId} activeCalls={activeCalls} />
                 <ActiveCallsPanel activeCalls={activeCalls} />
+            </section>
+
+            {/* ===== SEÇÃO DE MICROFONE ===== */}
+            <section className="mic-section" aria-labelledby="micTitle">
+                <h2 id="micTitle">MICROFONE</h2>
+                <div className="mic-area">
+                    <select
+                        className="mic-select"
+                        value={selectedMicId ?? ''}
+                        onChange={handleMicChange}
+                        disabled={!mics.length}
+                    >
+                        {!mics.length ? (
+                            <option value="">Carregando microfones...</option>
+                        ) : (
+                            <>
+                                <option value="">Padrão do sistema</option>
+                                {mics.map((mic) => (
+                                    <option key={mic.id} value={mic.id}>
+                                        {mic.name}
+                                        {mic.isDefault ? ' (padrão)' : ''}
+                                        {mic.channels === 1 ? ' • mono' : ''}
+                                    </option>
+                                ))}
+                            </>
+                        )}
+                    </select>
+
+                    <button
+                        type="button"
+                        className="secondary-button"
+                        title="Atualizar lista de microfones"
+                        onClick={refreshMics}
+                    >
+                        ↻
+                    </button>
+
+                    <button
+                        type="button"
+                        className={`test-mic-button${testingMic ? ' active' : ''}`}
+                        onClick={toggleMicTest}
+                    >
+                        {testingMic ? 'Parar teste' : 'Testar microfone'}
+                    </button>
+                </div>
+
+                <div className="mic-gain-area">
+                    <label className="mic-gain-label" htmlFor="micGainSlider">
+                        Ganho: <strong>{micGain}%</strong>
+                    </label>
+                    <input
+                        id="micGainSlider"
+                        className="mic-gain-slider"
+                        type="range"
+                        min={0}
+                        max={2000}
+                        step={1}
+                        value={micGain}
+                        onChange={handleGainChange}
+                    />
+                    <div className="mic-gain-presets">
+                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 0 } })}>
+                            0%
+                        </button>
+                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 100 } })}>
+                            100%
+                        </button>
+                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 200 } })}>
+                            200%
+                        </button>
+                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 500 } })}>
+                            500%
+                        </button>
+                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 1000 } })}>
+                            1000%
+                        </button>
+                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 2000 } })}>
+                            2000%
+                        </button>
+                    </div>
+                </div>
             </section>
 
             <section className="log-section" aria-labelledby="logTitle">
