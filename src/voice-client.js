@@ -783,36 +783,19 @@ function createVoiceClient({
 
             case VoiceOp.CLIENT_DISCONNECT: {
                 if (d.user_id) {
-                    const userId =
-                        String(d.user_id);
+                    const userId = String(d.user_id);
 
-                    recognizedUserIds.delete(
-                        userId
-                    );
+                    recognizedUserIds.delete(userId);
 
-                    /*
-                     * Remove todos os SSRCs associados ao usuário.
-                     */
-                    for (
-                        const [
-                            mappedSsrc,
-                            mappedUserId
-                        ] of ssrcMap
-                    ) {
-                        if (
-                            mappedUserId === userId
-                        ) {
-                            ssrcMap.delete(
-                                mappedSsrc
-                            );
+                    for (const [mappedSsrc, mappedUserId] of ssrcMap) {
+                        if (mappedUserId === userId) {
+                            audioPlayer.releaseSsrc(mappedSsrc); // <-- adicionar
+                            ssrcMap.delete(mappedSsrc);
                         }
                     }
 
-                    log(
-                        `[DAVE] usuário ${userId} desconectou.`
-                    );
+                    log(`[DAVE] usuário ${userId} desconectou.`);
                 }
-
                 break;
             }
 
