@@ -12,13 +12,44 @@ try {
     // Erros de importação são tratados em init()
 }
 
+/*
+ * Discord voice:
+ *
+ * 48000 Hz
+ * 2 canais
+ * 20 ms por frame
+ *
+ * 48000 * 0.020 = 960 samples/channel
+ */
+const SAMPLE_RATE = 48000;
+const CHANNELS = 2;
+const FRAME_SAMPLES_PER_CHANNEL = 960;
+
 class AudioPlayer {
     constructor(onLog) {
         this.log = onLog || console.log;
 
-        this.opusDecoder = null;
-        this.rtAudio = null;
         this.isInitialized = false;
+
+        /*
+         * IMPORTANTE:
+         *
+         * Cada SSRC (usuário falando) recebe:
+         *
+         *  - seu próprio decoder Opus (stateful, não pode ser
+         *    compartilhado entre usuários diferentes ou o PLC
+         *    quebra e gera artefatos "robóticos")
+         *
+         *  - seu próprio stream de saída RtAudio, independente
+         *    do stream dos outros usuários.
+         *
+         * A mixagem de várias pessoas falando ao mesmo tempo fica
+         * a cargo do próprio sistema operacional (modo compartilhado
+         * do WASAPI/CoreAudio/PulseAudio), que já sabe combinar
+         * múltiplos streams de áudio simultâneos no mesmo dispositivo
+         * sem gerar os artefatos de uma mixagem manual malfeita.
+         */
+        this.userStreams = new Map(); // ssrc -> { decoder, rtAudio }
 
         this.debugFlags = {
             firstPacket: false,
@@ -38,53 +69,68 @@ class AudioPlayer {
             return false;
         }
 
-        try {
-            /*
-             * Discord voice:
-             *
-             * 48000 Hz
-             * 2 canais
-             * 20 ms por frame
-             *
-             * 48000 * 0.020 = 960 samples/channel
-             */
-            this.opusDecoder = new OpusScript(
-                48000,
-                2,
-                OpusScript.Application.AUDIO
-            );
+        /*
+         * Aqui não abrimos nenhum stream ainda.
+         *
+         * Os streams são criados sob demanda, um por SSRC,
+         * na primeira vez que um pacote daquele usuário chega
+         * (ver _getOrCreateUserStream).
+         *
+         * Isso evita abrir dispositivos de áudio "no vazio"
+         * para usuários que nunca vão falar.
+         */
+        this.isInitialized = true;
 
-            this.rtAudio = new audify.RtAudio();
+        this.log(
+            '[Áudio-Init] AudioPlayer pronto (streams por usuário serão criados sob demanda).'
+        );
 
-            this.rtAudio.openStream(
-                {
-                    deviceId: this.rtAudio.getDefaultOutputDevice(),
-                    nChannels: 2,
-                    firstChannel: 0
-                },
-                null,
-                audify.RtAudioFormat.RTAUDIO_SINT16,
-                48000,
-                960,
-                'DiscordBot'
-            );
+        return true;
+    }
 
-            this.rtAudio.start();
+    /**
+     * Cria (se ainda não existir) o decoder Opus + stream de saída
+     * dedicados a este SSRC.
+     */
+    _getOrCreateUserStream(ssrc) {
+        let entry = this.userStreams.get(ssrc);
 
-            this.isInitialized = true;
-
-            this.log(
-                '[Áudio-Init] Placa de som e Opus iniciados com sucesso.'
-            );
-
-            return true;
-        } catch (e) {
-            this.log(
-                `[Áudio-Init] Falha ao iniciar hardware: ${e.message}`
-            );
-
-            return false;
+        if (entry) {
+            return entry;
         }
+
+        const decoder = new OpusScript(
+            SAMPLE_RATE,
+            CHANNELS,
+            OpusScript.Application.AUDIO
+        );
+
+        const rtAudio = new audify.RtAudio();
+
+        rtAudio.openStream(
+            {
+                deviceId: rtAudio.getDefaultOutputDevice(),
+                nChannels: CHANNELS,
+                firstChannel: 0
+            },
+            null,
+            audify.RtAudioFormat.RTAUDIO_SINT16,
+            SAMPLE_RATE,
+            FRAME_SAMPLES_PER_CHANNEL,
+            `DiscordBot-${ssrc}`
+        );
+
+        rtAudio.start();
+
+        entry = { decoder, rtAudio };
+
+        this.userStreams.set(ssrc, entry);
+
+        this.log(
+            `[Áudio] Stream de saída criado para SSRC ${ssrc}.`
+        );
+
+        return entry;
     }
 
     /**
@@ -180,9 +226,9 @@ class AudioPlayer {
             if (
                 packet.length <
                 headerLen +
-                extensionDataLen +
-                16 +
-                4
+                    extensionDataLen +
+                    16 +
+                    4
             ) {
                 throw new Error('RTP extension truncada');
             }
@@ -336,11 +382,11 @@ class AudioPlayer {
      *  ↓
      * DAVE
      *  ↓
-     * Opus
+     * Opus (decoder por-SSRC)
      *  ↓
      * PCM
      *  ↓
-     * speaker
+     * speaker (stream por-SSRC — mixagem feita pelo SO)
      */
     processPacket(
         msg,
@@ -575,13 +621,16 @@ class AudioPlayer {
 
             /*
              * ======================================================
-             * 5. OPUS -> PCM
+             * 5. OPUS -> PCM (decoder por-SSRC)
              * ======================================================
              */
+            const { decoder, rtAudio } =
+                this._getOrCreateUserStream(ssrc);
+
             let pcmData;
 
             try {
-                pcmData = this.opusDecoder.decode(opusFrame);
+                pcmData = decoder.decode(opusFrame);
 
                 if (!pcmData || pcmData.length === 0) {
                     if (!this.debugFlags.decodeError) {
@@ -608,15 +657,15 @@ class AudioPlayer {
 
             /*
              * ======================================================
-             * 6. PCM -> SPEAKER
+             * 6. PCM -> SPEAKER (stream dedicado deste usuário)
              * ======================================================
              */
             try {
-                this.rtAudio.write(pcmData);
+                rtAudio.write(pcmData);
             } catch (e) {
                 if (!this.debugFlags.speakerError) {
                     this.log(
-                        `[Áudio-Debug] (4/4) ERRO HARDWARE: ${e.message}`
+                        `[Áudio-Debug] (4/4) ERRO HARDWARE (SSRC ${ssrc}): ${e.message}`
                     );
 
                     this.debugFlags.speakerError = true;
@@ -630,32 +679,54 @@ class AudioPlayer {
         }
     }
 
+    /**
+     * Chamado quando um usuário sai do canal de voz (ver
+     * VoiceOp.CLIENT_DISCONNECT em discord-voice.js).
+     *
+     * Fecha o stream de saída e libera o decoder Opus dedicados
+     * a este SSRC, evitando vazamento de dispositivos de áudio
+     * abertos e memória de usuários que já saíram da call.
+     */
+    releaseSsrc(ssrc) {
+        const entry = this.userStreams.get(ssrc);
+
+        if (!entry) {
+            return;
+        }
+
+        const { decoder, rtAudio } = entry;
+
+        try {
+            decoder.delete();
+        } catch (e) {
+            // Ignorado
+        }
+
+        try {
+            rtAudio.stop();
+        } catch (e) {
+            // Ignorado
+        }
+
+        try {
+            rtAudio.closeStream();
+        } catch (e) {
+            // Ignorado
+        }
+
+        this.userStreams.delete(ssrc);
+
+        this.log(
+            `[Áudio] Stream de saída encerrado para SSRC ${ssrc}.`
+        );
+    }
+
     destroy() {
-        if (this.opusDecoder) {
-            try {
-                this.opusDecoder.delete();
-            } catch (e) {
-                // Ignorado
-            }
-
-            this.opusDecoder = null;
+        for (const ssrc of Array.from(this.userStreams.keys())) {
+            this.releaseSsrc(ssrc);
         }
 
-        if (this.rtAudio) {
-            try {
-                this.rtAudio.stop();
-            } catch (e) {
-                // Ignorado
-            }
-
-            try {
-                this.rtAudio.closeStream();
-            } catch (e) {
-                // Ignorado
-            }
-
-            this.rtAudio = null;
-        }
+        this.userStreams.clear();
 
         this.isInitialized = false;
 
