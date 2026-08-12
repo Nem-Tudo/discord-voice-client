@@ -1,25 +1,19 @@
 'use strict';
 
-/**
- * Interface Electron para o cliente de voz.
- *
- * Rode com:
- *   npm start
- *   npm start -- <token> <guildId> <channelId>
- */
-
 const path = require('path');
 const { app, BrowserWindow, ipcMain } = require('electron');
 
 const { createVoiceClient } = require('./src/voice-client.js');
 
-let mainWindow = null;
-let client = null;
-let muted = false;
-let deafened = false;
-let connected = false;
+const [, , ARG_TOKEN] = process.argv;
 
-const [, , ARG_TOKEN, ARG_GUILD, ARG_CHANNEL] = process.argv;
+let mainWindow = null;
+let browserClient = null;
+let activeToken = null;
+let allMuted = false;
+let allDeafened = false;
+
+const voiceClients = new Map();
 
 function sendToRenderer(channel, payload) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -31,34 +25,100 @@ function log(message) {
     sendToRenderer('voice:log', `[${time}] ${message}`);
 }
 
-function publishState(extra = {}) {
-    sendToRenderer('voice:state', {
-        connected,
-        muted,
-        deafened,
-        ...extra
-    });
+function activeCallsPayload() {
+    return {
+        allMuted,
+        allDeafened,
+        calls: Array.from(voiceClients.values()).map((entry) => ({
+            guildId: entry.guildId,
+            guildName: entry.guildName,
+            channelId: entry.channelId,
+            channelName: entry.channelName,
+            muted: entry.muted,
+            deafened: entry.deafened,
+            switching: Boolean(entry.pending)
+        }))
+    };
 }
 
-function setConnectedState(isConnected) {
-    connected = isConnected;
-    publishState({
-        status: isConnected ? 'Conectado a call' : 'Desconectado'
-    });
+function publishActiveCalls() {
+    sendToRenderer('voice:active-calls', activeCallsPayload());
 }
 
-function resetLocalState() {
-    muted = false;
-    deafened = false;
-    client = null;
-    setConnectedState(false);
+function stopBrowserClient() {
+    if (!browserClient) return;
+    const oldClient = browserClient;
+    browserClient = null;
+    oldClient.disconnect();
+}
+
+function stopAllVoiceClients() {
+    for (const entry of voiceClients.values()) {
+        entry.pending = null;
+        entry.client.disconnect();
+    }
+    voiceClients.clear();
+    allMuted = false;
+    allDeafened = false;
+    publishActiveCalls();
+}
+
+function startVoiceCall(guild, channel) {
+    if (!activeToken) {
+        log('Carregue os servidores antes de entrar em uma call.');
+        return;
+    }
+
+    const entry = {
+        guildId: guild.id,
+        guildName: guild.name,
+        channelId: channel.id,
+        channelName: channel.name,
+        muted: allMuted,
+        deafened: allDeafened,
+        pending: null,
+        client: null
+    };
+
+    const voiceClient = createVoiceClient({
+        token: activeToken,
+        guildId: guild.id,
+        channelId: channel.id,
+        onLog: log,
+        onReady: () => {
+            log(`Conectado em ${channel.name} (${guild.name}).`);
+            publishActiveCalls();
+        },
+        onDisconnected: (reason) => {
+            if (voiceClients.get(guild.id) !== entry) return;
+
+            const nextChannel = entry.pending;
+            voiceClients.delete(guild.id);
+            publishActiveCalls();
+
+            if (nextChannel) {
+                startVoiceCall(guild, nextChannel);
+            } else {
+                log(`[Voice] call removida (${reason}).`);
+                sendToRenderer('voice:status', `Saiu da call de ${guild.name}.`);
+            }
+        }
+    });
+
+    entry.client = voiceClient;
+    voiceClients.set(guild.id, entry);
+    publishActiveCalls();
+
+    voiceClient.connect();
+    if (entry.muted) voiceClient.setMute(true);
+    if (entry.deafened) voiceClient.setDeafen(true);
 }
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 460,
-        height: 640,
-        minWidth: 420,
+        width: 920,
+        height: 720,
+        minWidth: 760,
         minHeight: 560,
         title: 'Discord Voice',
         backgroundColor: '#313338',
@@ -73,91 +133,126 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
     mainWindow.webContents.once('did-finish-load', () => {
-        sendToRenderer('voice:defaults', {
-            token: ARG_TOKEN || '',
-            guildId: ARG_GUILD || '',
-            channelId: ARG_CHANNEL || ''
-        });
-        publishState({ status: 'Desconectado' });
+        sendToRenderer('voice:defaults', { token: ARG_TOKEN || '' });
+        publishActiveCalls();
     });
 
     mainWindow.on('close', () => {
-        if (client) {
-            client.disconnect();
-        }
+        stopAllVoiceClients();
+        stopBrowserClient();
     });
 }
 
-ipcMain.handle('voice:connect', async (_event, { token, guildId, channelId }) => {
-    if (client) {
-        log('Ja existe uma conexao ativa.');
+ipcMain.handle('voice:load-servers', async (_event, { token }) => {
+    const nextToken = String(token || '').trim();
+    if (!nextToken) {
+        log('Informe o token antes de continuar.');
         return;
     }
 
-    if (!token || !guildId || !channelId) {
-        log('Preencha token, ID do servidor e ID do canal antes de conectar.');
-        publishState({ connecting: false });
-        return;
-    }
+    stopBrowserClient();
+    stopAllVoiceClients();
 
-    publishState({
-        connecting: true,
-        status: 'Conectando...'
-    });
+    activeToken = nextToken;
+    sendToRenderer('voice:browser-reset');
+    sendToRenderer('voice:status', 'Conectando ao Discord...');
 
-    client = createVoiceClient({
-        token,
-        guildId,
-        channelId,
+    let nextClient = null;
+    nextClient = createVoiceClient({
+        token: nextToken,
         onLog: log,
-        onReady: () => {
-            muted = false;
-            deafened = false;
-            setConnectedState(true);
-            publishState({ connecting: false });
+        onGatewayReady: (ready) => {
+            if (browserClient !== nextClient) return;
+            sendToRenderer('voice:gateway-ready', ready);
+            log(`Logado como ${ready.user.username}`);
+            sendToRenderer('voice:status', 'Servidores carregados. Escolha um servidor e depois uma call.');
+        },
+        onGuildCreate: (guild) => {
+            if (browserClient !== nextClient) return;
+            sendToRenderer('voice:guild-create', guild);
+        },
+        onVoiceStateUpdate: (state) => {
+            if (browserClient !== nextClient) return;
+            sendToRenderer('voice:voice-state', state);
         },
         onDisconnected: (reason) => {
+            if (browserClient !== nextClient) return;
+            browserClient = null;
+            activeToken = null;
             log(`Desconectado (${reason})`);
-            resetLocalState();
-            publishState({ connecting: false });
+            sendToRenderer('voice:status', 'Desconectado');
         }
     });
 
-    client.connect();
+    browserClient = nextClient;
+    browserClient.connect();
 });
 
-ipcMain.handle('voice:disconnect', async () => {
-    if (!client) return;
-    client.disconnect();
-});
+ipcMain.handle('voice:join-call', async (_event, { guild, channel }) => {
+    if (!guild?.id || !channel?.id) return;
 
-ipcMain.handle('voice:set-mute', async () => {
-    if (!client) return;
-
-    muted = !muted;
-    client.setMute(muted);
-
-    log(muted ? 'Microfone mutado' : 'Microfone desmutado');
-    publishState();
-});
-
-ipcMain.handle('voice:set-deafen', async () => {
-    if (!client) return;
-
-    deafened = !deafened;
-
-    if (deafened) {
-        muted = true;
-        client.setDeafen(true);
-        log('Audio ensurdecido (mic mutado junto)');
-    } else {
-        muted = false;
-        client.setDeafen(false);
-        client.setMute(false);
-        log('Audio reativado (mic desmutado junto)');
+    const entry = voiceClients.get(guild.id);
+    if (!entry) {
+        sendToRenderer('voice:status', `Entrando em ${channel.name}...`);
+        startVoiceCall(guild, channel);
+        return;
     }
 
-    publishState();
+    if (entry.channelId === channel.id) return;
+
+    entry.pending = channel;
+    entry.client.disconnect();
+    sendToRenderer('voice:status', `Trocando para ${channel.name}...`);
+    publishActiveCalls();
+});
+
+ipcMain.handle('voice:leave-call', async (_event, { guildId }) => {
+    const entry = voiceClients.get(guildId);
+    if (!entry) return;
+
+    entry.pending = null;
+    voiceClients.delete(guildId);
+    entry.client.disconnect();
+    sendToRenderer('voice:status', `Saiu da call de ${entry.guildName}.`);
+    publishActiveCalls();
+});
+
+ipcMain.handle('voice:set-call-mute', async (_event, { guildId }) => {
+    const entry = voiceClients.get(guildId);
+    if (!entry) return;
+
+    entry.muted = !entry.muted;
+    entry.client.setMute(entry.muted);
+    publishActiveCalls();
+});
+
+ipcMain.handle('voice:set-call-deafen', async (_event, { guildId }) => {
+    const entry = voiceClients.get(guildId);
+    if (!entry) return;
+
+    entry.deafened = !entry.deafened;
+    entry.client.setDeafen(entry.deafened);
+    if (entry.deafened) entry.muted = true;
+    publishActiveCalls();
+});
+
+ipcMain.handle('voice:set-all-mute', async () => {
+    allMuted = !allMuted;
+    for (const entry of voiceClients.values()) {
+        entry.muted = allMuted;
+        entry.client.setMute(allMuted);
+    }
+    publishActiveCalls();
+});
+
+ipcMain.handle('voice:set-all-deafen', async () => {
+    allDeafened = !allDeafened;
+    for (const entry of voiceClients.values()) {
+        entry.deafened = allDeafened;
+        entry.client.setDeafen(allDeafened);
+        if (allDeafened) entry.muted = true;
+    }
+    publishActiveCalls();
 });
 
 app.whenReady().then(createWindow);
@@ -175,8 +270,7 @@ app.on('activate', () => {
 });
 
 process.on('SIGINT', () => {
-    if (client) {
-        client.disconnect();
-    }
+    stopAllVoiceClients();
+    stopBrowserClient();
     setTimeout(() => process.exit(0), 100);
 });

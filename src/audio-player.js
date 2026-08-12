@@ -20,6 +20,7 @@ class AudioPlayer {
     constructor(onLog) {
         this.log = onLog || console.log;
         this.isInitialized = false;
+        this.isDestroyed = false;
         this.userStreams = new Map(); // ssrc -> { decoder, rtAudio, ready }
 
         this.debugFlags = {
@@ -38,6 +39,7 @@ class AudioPlayer {
             return false;
         }
 
+        this.isDestroyed = false;
         this.isInitialized = true;
         this.log('[Áudio-Init] AudioPlayer pronto (usando opus-decoder WASM).');
         return true;
@@ -47,13 +49,17 @@ class AudioPlayer {
      * Cria decoder + stream de saída para um SSRC
      */
     async _getOrCreateUserStream(ssrc) {
+        if (this.isDestroyed) {
+            return null;
+        }
+
         let entry = this.userStreams.get(ssrc);
         if (entry) {
             // espera o decoder ficar pronto se ainda não estiver
             if (!entry.ready) {
                 await entry.readyPromise;
             }
-            return entry;
+            return this.isDestroyed ? null : entry;
         }
 
         const decoder = new OpusDecoder({
@@ -95,7 +101,7 @@ class AudioPlayer {
         // espera o decoder ficar pronto na primeira vez
         await readyPromise;
 
-        return entry;
+        return this.isDestroyed ? null : entry;
     }
 
     decryptAesGcmTransport(packet, secretKey) {
@@ -286,7 +292,10 @@ class AudioPlayer {
             if (opusFrame.length < 3 || opusFrame.length > 1500) return;
 
             // 5. OPUS → PCM (usando opus-decoder)
-            const { decoder, rtAudio } = await this._getOrCreateUserStream(ssrc);
+            const stream = await this._getOrCreateUserStream(ssrc);
+            if (!stream) return;
+
+            const { decoder, rtAudio } = stream;
 
             let pcmData;
             try {
@@ -354,6 +363,8 @@ class AudioPlayer {
     }
 
     destroy() {
+        this.isDestroyed = true;
+
         for (const ssrc of Array.from(this.userStreams.keys())) {
             this.releaseSsrc(ssrc);
         }

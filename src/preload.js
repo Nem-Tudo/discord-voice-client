@@ -9,17 +9,26 @@ function subscribe(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld('discordVoice', {
-    connect(data) {
-        return ipcRenderer.invoke('voice:connect', data);
+    loadServers(data) {
+        return ipcRenderer.invoke('voice:load-servers', data);
     },
-    disconnect() {
-        return ipcRenderer.invoke('voice:disconnect');
+    joinCall(data) {
+        return ipcRenderer.invoke('voice:join-call', data);
     },
-    toggleMute() {
-        return ipcRenderer.invoke('voice:set-mute');
+    leaveCall(guildId) {
+        return ipcRenderer.invoke('voice:leave-call', { guildId });
     },
-    toggleDeafen() {
-        return ipcRenderer.invoke('voice:set-deafen');
+    toggleCallMute(guildId) {
+        return ipcRenderer.invoke('voice:set-call-mute', { guildId });
+    },
+    toggleCallDeafen(guildId) {
+        return ipcRenderer.invoke('voice:set-call-deafen', { guildId });
+    },
+    toggleAllMute() {
+        return ipcRenderer.invoke('voice:set-all-mute');
+    },
+    toggleAllDeafen() {
+        return ipcRenderer.invoke('voice:set-all-deafen');
     },
     onDefaults(callback) {
         return subscribe('voice:defaults', callback);
@@ -27,7 +36,22 @@ contextBridge.exposeInMainWorld('discordVoice', {
     onLog(callback) {
         return subscribe('voice:log', callback);
     },
-    onState(callback) {
-        return subscribe('voice:state', callback);
+    onStatus(callback) {
+        return subscribe('voice:status', callback);
+    },
+    onBrowserReset(callback) {
+        return subscribe('voice:browser-reset', callback);
+    },
+    onGatewayReady(callback) {
+        return subscribe('voice:gateway-ready', callback);
+    },
+    onGuildCreate(callback) {
+        return subscribe('voice:guild-create', callback);
+    },
+    onVoiceStateUpdate(callback) {
+        return subscribe('voice:voice-state', callback);
+    },
+    onActiveCalls(callback) {
+        return subscribe('voice:active-calls', callback);
     }
 });

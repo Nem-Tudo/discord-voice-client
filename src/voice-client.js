@@ -60,6 +60,9 @@ function createVoiceClient({
     guildId,
     channelId,
     onLog,
+    onGatewayReady,
+    onGuildCreate,
+    onVoiceStateUpdate,
     onReady,
     onDisconnected
 }) {
@@ -337,18 +340,28 @@ function createVoiceClient({
                     `[Gateway] logado como ${d.user.username}`
                 );
 
-                joinVoiceChannel();
+                if (onGatewayReady) {
+                    onGatewayReady(d);
+                }
+
+                if (guildId && channelId) {
+                    joinVoiceChannel();
+                }
 
                 break;
             }
 
 
             case 'VOICE_STATE_UPDATE': {
+                if (onVoiceStateUpdate) {
+                    onVoiceStateUpdate(d);
+                }
+
                 /*
                  * Discord envia nosso próprio session_id
                  * através desse evento.
                  */
-                if (d.user_id === botUserId) {
+                if (guildId && channelId && d.user_id === botUserId) {
                     voiceSessionId = d.session_id;
 
                     maybeConnectVoice();
@@ -366,10 +379,22 @@ function createVoiceClient({
 
 
             case 'VOICE_SERVER_UPDATE': {
+                if (!guildId || !channelId) {
+                    break;
+                }
+
                 voiceServerToken = d.token;
                 voiceEndpoint = d.endpoint;
 
                 maybeConnectVoice();
+
+                break;
+            }
+
+            case 'GUILD_CREATE': {
+                if (onGuildCreate) {
+                    onGuildCreate(d);
+                }
 
                 break;
             }
@@ -1671,15 +1696,17 @@ function createVoiceClient({
             /*
              * Remove o bot do canal.
              */
-            sendGateway(
-                4,
-                {
-                    guild_id: guildId,
-                    channel_id: null,
-                    self_mute: false,
-                    self_deaf: false
-                }
-            );
+            if (guildId) {
+                sendGateway(
+                    4,
+                    {
+                        guild_id: guildId,
+                        channel_id: null,
+                        self_mute: false,
+                        self_deaf: false
+                    }
+                );
+            }
 
 
             setTimeout(
