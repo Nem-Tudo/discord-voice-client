@@ -120,7 +120,7 @@ function createWindow() {
         height: 720,
         minWidth: 760,
         minHeight: 560,
-        title: 'Discord Voice',
+        title: 'Discord Voice Pro',
         backgroundColor: '#313338',
         webPreferences: {
             preload: path.join(__dirname, 'src', 'preload.js'),
