@@ -21,7 +21,7 @@ function initialFor(text) {
 function Avatar({ className, text, url }) {
     return (
         <span className={className}>
-            {url ? <img src={url} alt="" referrerPolicy="no-referrer" /> : initialFor(text)}
+            {url ? <img style={{ width: "100%" }} src={url} alt="" referrerPolicy="no-referrer" /> : initialFor(text)}
         </span>
     );
 }
@@ -800,6 +800,15 @@ function App() {
                             value={micGain}
                             onChange={handleGainChange}
                         />
+                        <div className="audio-meter mic-send-meter" aria-label="Áudio enviado ao Discord">
+                            <div
+                                className="audio-meter-fill"
+                                style={{
+                                    width: `${Math.round(Math.max(...activeCalls.calls.map((entry) => entry.inputLevel || 0), 0) * 100)}%`
+                                }}
+                            />
+                        </div>
+                        <span className="audio-meter-caption">Áudio enviado ao Discord</span>
                         <div className="mic-gain-presets">
                             {[0, 100, 200, 500, 1000, 2000].map((v) => (
                                 <button
@@ -985,6 +994,7 @@ function CategoryHeader({ name, collapsed, onClick }) {
 
 function ChannelsPanel({ guild, currentUserId, activeCalls, speakingPriorityEnabled }) {
     const [query, setQuery] = useState('');
+    const [memberQuery, setMemberQuery] = useState('');
     const [collapsedCategories, setCollapsedCategories] = useState(
         new Set()
     );
@@ -1032,12 +1042,30 @@ function ChannelsPanel({ guild, currentUserId, activeCalls, speakingPriorityEnab
 
     const groupedChannels = useMemo(() => {
         const q = normalizeSearch(query);
+        const memberQ = normalizeSearch(memberQuery);
 
-        const matches = q
-            ? channels.filter((channel) =>
-                normalizeSearch(channel.name).includes(q)
-            )
-            : channels;
+        const channelHasMember = (channel) => {
+            if (!memberQ) return true;
+
+            return Object.values(guild?.voiceStates || {}).some((state) => {
+                if (state.channel_id !== channel.id) return false;
+
+                const user = getStateUser(guild, state) || {};
+                const member = state.member || guild?.members?.[state.user_id] || {};
+
+                return [
+                    state.user_id,
+                    user.username,
+                    user.global_name,
+                    member.nick
+                ].some((value) => normalizeSearch(value).includes(memberQ));
+            });
+        };
+
+        const matches = channels.filter((channel) =>
+            (!q || normalizeSearch(channel.name).includes(q)) &&
+            channelHasMember(channel)
+        );
 
         // Discord ordena a árvore pela posição global dos containers.
         // Isso permite que canais sem categoria apareçam entre categorias.
@@ -1084,10 +1112,11 @@ function ChannelsPanel({ guild, currentUserId, activeCalls, speakingPriorityEnab
         });
 
         return groups;
-    }, [channels, categories, query]);
+    }, [channels, categories, query, memberQuery, guild]);
 
     useEffect(() => {
         setQuery('');
+        setMemberQuery('');
     }, [guild?.id]);
 
     return (
@@ -1097,14 +1126,24 @@ function ChannelsPanel({ guild, currentUserId, activeCalls, speakingPriorityEnab
             </div>
 
             {guild && channels.length ? (
-                <input
-                    className="panel-search"
-                    type="search"
-                    placeholder="Buscar canal..."
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    aria-label="Buscar canal de voz"
-                />
+                <div className="channel-search-row">
+                    <input
+                        className="panel-search"
+                        type="search"
+                        placeholder="Buscar canal..."
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        aria-label="Buscar canal de voz"
+                    />
+                    <input
+                        className="panel-search"
+                        type="search"
+                        placeholder="Buscar membro..."
+                        value={memberQuery}
+                        onChange={(event) => setMemberQuery(event.target.value)}
+                        aria-label="Buscar membro por ID, username, apelido ou display name"
+                    />
+                </div>
             ) : null}
 
             <div className="discord-channel-list">
@@ -1609,11 +1648,22 @@ function ActiveCallsPanel({ activeCalls, guilds }) {
 
                     return (
                         <article key={entry.guildId} className="active-card">
+                            <Avatar
+                                className="active-server-icon"
+                                text={entry.guildName}
+                                url={serverIconUrl(guilds?.[entry.guildId])}
+                            />
                             <div className="active-labels">
                                 <span className="active-title">
                                     {entry.switching ? `${channelName}...` : channelName}
                                 </span>
                                 <span className="active-meta">{entry.guildName}</span>
+                                <div className="audio-meter active-audio-meter" aria-label="Áudio recebido da call">
+                                    <div
+                                        className="audio-meter-fill"
+                                        style={{ width: `${Math.round((entry.outputLevel || 0) * 100)}%` }}
+                                    />
+                                </div>
                             </div>
                             <IconButton
                                 icon={entry.muted ? micOffIcon : micOnIcon}

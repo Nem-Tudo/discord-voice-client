@@ -67,6 +67,7 @@ function createVoiceClient({
     onGuildCreate,
     onVoiceStateUpdate,
     onSpeaking,
+    onAudioLevel,
     onReady,
     onDisconnected,
     onJoinError
@@ -90,6 +91,12 @@ function createVoiceClient({
             user_id: String(botUserId),
             speaking: Boolean(speaking)
         });
+    });
+
+    audioSender.setAudioLevelCallback((level) => {
+        if (typeof onAudioLevel === 'function') {
+            onAudioLevel({ guild_id: guildId, direction: 'input', level: Number(level) || 0 });
+        }
     });
 
     // Preferências de microfone (podem ser alteradas antes ou depois do init)
@@ -192,6 +199,10 @@ function createVoiceClient({
                 ssrc: activity.ssrc,
                 speaking: Boolean(activity.speaking)
             });
+        }
+    }, (level) => {
+        if (typeof onAudioLevel === 'function') {
+            onAudioLevel({ guild_id: guildId, direction: 'output', level: Number(level) || 0 });
         }
     });
 
@@ -2050,6 +2061,10 @@ function createVoiceClient({
 
         setDeafen(deaf) {
             selfDeaf = Boolean(deaf);
+
+            if (selfDeaf && typeof onAudioLevel === 'function') {
+                onAudioLevel({ guild_id: guildId, direction: 'output', level: 0 });
+            }
 
             if (selfDeaf) {
                 selfMute = true;

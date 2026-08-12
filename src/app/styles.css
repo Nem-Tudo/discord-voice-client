@@ -239,6 +239,62 @@ input:disabled {
     opacity: 0.5;
 }
 
+
+.channel-search-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.channel-search-row .panel-search {
+    min-width: 0;
+}
+
+.audio-meter {
+    width: 100%;
+    height: 5px;
+    overflow: hidden;
+    background: #2b2d31;
+    border-radius: 3px;
+}
+
+.audio-meter-fill {
+    width: 0;
+    height: 100%;
+    background: #23a55a;
+    border-radius: inherit;
+    transition: width 70ms linear;
+}
+
+.audio-meter-caption {
+    color: #949ba4;
+    font-size: 10px;
+    line-height: 1;
+}
+
+.mic-send-meter {
+    margin-top: 1px;
+}
+
+.active-server-icon {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    border-radius: 50%;
+    font-size: 11px;
+}
+
+.active-audio-meter {
+    margin-top: 5px;
+}
+
+@media (max-width: 700px) {
+    .channel-search-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 .scroll-list {
     display: flex;
     min-height: 0;

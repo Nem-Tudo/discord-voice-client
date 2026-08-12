@@ -69,7 +69,10 @@ function activeCallsPayload() {
             status: entry.status || 'connected',
             error: entry.error || null,
 
-            switching: Boolean(entry.pending)
+            switching: Boolean(entry.pending),
+
+            inputLevel: Number(entry.inputLevel || 0),
+            outputLevel: Number(entry.outputLevel || 0)
         }))
     };
 }
@@ -268,6 +271,9 @@ function showVoiceJoinError(guild, channel, message) {
         status: 'error',
         error: message,
 
+        inputLevel: 0,
+        outputLevel: 0,
+
         pending: null,
         externallyDisconnected: false,
         client: null
@@ -335,6 +341,9 @@ function startVoiceCall(guild, channel, {
 
         status: 'connecting',
         error: null,
+
+        inputLevel: 0,
+        outputLevel: 0,
 
         pending: null,
         externallyDisconnected: false,
@@ -424,6 +433,19 @@ function startVoiceCall(guild, channel, {
                 user_id: String(speaking.user_id),
                 speaking: Boolean(speaking.speaking)
             });
+        },
+        onAudioLevel: ({ direction, level }) => {
+            if (voiceClients.get(guild.id) !== entry) return;
+
+            const value = Math.max(0, Math.min(1, Number(level) || 0));
+            if (direction === 'input') entry.inputLevel = value;
+            if (direction === 'output') entry.outputLevel = value;
+
+            const now = Date.now();
+            if (!entry._lastAudioPublish || now - entry._lastAudioPublish >= 50) {
+                entry._lastAudioPublish = now;
+                publishActiveCalls();
+            }
         },
         onReady: () => {
             entry.status = 'connected';

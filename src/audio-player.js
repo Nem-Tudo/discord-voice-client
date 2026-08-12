@@ -17,9 +17,10 @@ const FRAME_SAMPLES_PER_CHANNEL = 960;
 const EXPECTED_PCM_SIZE = FRAME_SAMPLES_PER_CHANNEL * CHANNELS * 2; // 3840 bytes (Int16)
 
 class AudioPlayer {
-    constructor(onLog, onSpeaking) {
+    constructor(onLog, onSpeaking, onAudioLevel) {
         this.log = onLog || console.log;
         this.onSpeaking = typeof onSpeaking === 'function' ? onSpeaking : null;
+        this.onAudioLevel = typeof onAudioLevel === 'function' ? onAudioLevel : null;
         this.isInitialized = false;
         this.isDestroyed = false;
         this.userStreams = new Map(); // ssrc -> { decoder, rtAudio, ready, speaking, lastVoiceAt, releaseTimer }
@@ -206,6 +207,28 @@ class AudioPlayer {
         }
 
         return pcm;
+    }
+
+    _updateAudioLevel(pcmData) {
+        if (!this.onAudioLevel || !pcmData || pcmData.length < 4) return;
+
+        const samples = new Int16Array(
+            pcmData.buffer,
+            pcmData.byteOffset,
+            Math.floor(pcmData.byteLength / 2)
+        );
+
+        let sumSquares = 0;
+        for (let i = 0; i < samples.length; i++) {
+            const normalized = samples[i] / 32768;
+            sumSquares += normalized * normalized;
+        }
+
+        const rms = Math.sqrt(sumSquares / Math.max(1, samples.length));
+        const db = 20 * Math.log10(Math.max(rms, 0.001));
+        const level = Math.max(0, Math.min(1, (db + 60) / 60));
+
+        try { this.onAudioLevel(level); } catch (_) { }
     }
 
     _updateVoiceActivity(ssrc, userId, pcmData) {
@@ -398,7 +421,9 @@ class AudioPlayer {
                 return;
             }
 
-            // 6. Detecta atividade real de voz para a UI.
+            // 6. Mede o áudio que efetivamente será reproduzido e detecta
+            // atividade real de voz para a UI.
+            this._updateAudioLevel(pcmData);
             this._updateVoiceActivity(ssrc, userId, pcmData);
 
             // 7. PCM → SPEAKER
@@ -425,6 +450,10 @@ class AudioPlayer {
         if (entry.releaseTimer) {
             clearTimeout(entry.releaseTimer);
             entry.releaseTimer = null;
+        }
+
+        if (this.onAudioLevel) {
+            try { this.onAudioLevel(0); } catch (_) { }
         }
 
         if (entry.speaking && this.onSpeaking) {

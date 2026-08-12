@@ -53,6 +53,7 @@ class AudioSender {
 
         // VAD local: informa quando o áudio capturado contém voz/som significativo.
         this.onSpeakingChange = null;
+        this.onAudioLevelChange = null;
         this.localSpeaking = false;
         this.localSpeakingUntil = 0;
         this.localVadLastChange = 0;
@@ -253,6 +254,10 @@ class AudioSender {
         this.onSpeakingChange = typeof callback === 'function' ? callback : null;
     }
 
+    setAudioLevelCallback(callback) {
+        this.onAudioLevelChange = typeof callback === 'function' ? callback : null;
+    }
+
     _setLocalSpeaking(value) {
         const next = Boolean(value);
         if (next === this.localSpeaking) return;
@@ -420,6 +425,7 @@ class AudioSender {
         this.desiredSpeaking = false;
         if (!this.speaking) return;
         this.speaking = false;
+        try { this.onAudioLevelChange?.(0); } catch (_) { }
 
         this.sendVoice?.(5, {
             speaking: 0,
@@ -465,12 +471,38 @@ class AudioSender {
         return opusFrame;
     }
 
+    _getAudioLevel(pcmBuffer) {
+        if (!pcmBuffer || pcmBuffer.length < 2) return 0;
+
+        const samples = new Int16Array(
+            pcmBuffer.buffer,
+            pcmBuffer.byteOffset,
+            Math.floor(pcmBuffer.byteLength / 2)
+        );
+
+        let sumSquares = 0;
+        for (let i = 0; i < samples.length; i++) {
+            const normalized = samples[i] / 32768;
+            sumSquares += normalized * normalized;
+        }
+
+        const rms = Math.sqrt(sumSquares / Math.max(1, samples.length));
+        const db = 20 * Math.log10(Math.max(rms, 0.001));
+
+        // Medidor do áudio já processado pelo pipeline (RNNoise + ganho),
+        // imediatamente antes da codificação Opus/criptografia.
+        return Math.max(0, Math.min(1, (db + 60) / 60));
+    }
+
     _processAndSend(pcmBuffer) {
         try {
             // Todo o DSP acontece antes do Opus/DAVE/RTP.
             // O VAD local também usa o áudio já limpo.
             const processed = this.audioPipeline.processFrame(pcmBuffer);
             this._updateLocalVad(processed);
+            try {
+                this.onAudioLevelChange?.(this._getAudioLevel(processed));
+            } catch (_) { }
 
             const opusFrame = this.encoder.encode(processed, FRAME_SIZE);
             if (!opusFrame || opusFrame.length === 0) return;
