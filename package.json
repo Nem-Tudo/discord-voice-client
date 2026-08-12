@@ -4,8 +4,11 @@
   "description": "",
   "main": "app.js",
   "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "electron": "electron .",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "electron ."
+    "start": "npm run build && electron ."
   },
   "keywords": [],
   "author": "",
@@ -18,6 +21,10 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "electron": "^37.2.6"
+    "@vitejs/plugin-react": "^6.0.5",
+    "electron": "^37.2.6",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vite": "^8.2.1"
   }
 }

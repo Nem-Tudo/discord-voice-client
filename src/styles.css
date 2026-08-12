@@ -166,6 +166,7 @@ input:disabled {
     color: #dbdee1;
     background: transparent;
     border: 0;
+    cursor: pointer;
     text-align: left;
 }
 
@@ -430,4 +431,9 @@ input:disabled {
 ::-webkit-scrollbar-thumb {
     background: var(--sb-thumb-color);
     border-radius: 8px;
+}
+
+#root {
+    width: 100%;
+    height: 100%;
 }

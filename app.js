@@ -130,7 +130,7 @@ function createWindow() {
     });
 
     mainWindow.setMenuBarVisibility(false);
-    mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
+    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
 
     mainWindow.webContents.once('did-finish-load', () => {
         sendToRenderer('voice:defaults', { token: ARG_TOKEN || '' });

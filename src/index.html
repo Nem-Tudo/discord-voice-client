@@ -7,40 +7,7 @@
     <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-    <main class="app-shell">
-        <form id="tokenForm" class="token-bar">
-            <label class="field">
-                <span>TOKEN</span>
-                <input id="tokenInput" type="password" placeholder="Token do Discord" autocomplete="off">
-            </label>
-            <button id="loadButton" class="primary-button" type="submit">Logar</button>
-        </form>
-
-        <p id="statusLabel" class="status">Informe o token para carregar seus servidores.</p>
-
-        <section class="browser">
-            <aside class="panel servers-panel">
-                <h2>SERVIDORES</h2>
-                <div id="serverList" class="scroll-list"></div>
-            </aside>
-
-            <section class="panel channels-panel">
-                <h2>CANAIS DE VOZ</h2>
-                <div id="channelList" class="scroll-list"></div>
-            </section>
-
-            <aside class="panel active-panel">
-                <h2>CALLS ATIVAS</h2>
-                <div id="activeCalls" class="scroll-list"></div>
-            </aside>
-        </section>
-
-        <section class="log-section" aria-labelledby="logTitle">
-            <h2 id="logTitle">LOGS</h2>
-            <pre id="logArea" class="log-area"></pre>
-        </section>
-    </main>
-
-    <script src="./renderer.js"></script>
+    <div id="root"></div>
+    <script type="module" src="./main.jsx"></script>
 </body>
 </html>
