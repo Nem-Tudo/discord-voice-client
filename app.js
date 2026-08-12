@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 
 const { createVoiceClient } = require('./src/voice-client.js');
 const { AudioSender } = require('./src/audio-sender.js');
@@ -276,7 +276,7 @@ function startVoiceCall(guild, channel) {
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1024,
-        height: 800,
+        height: 950,
         minWidth: 760,
         minHeight: 560,
         title: 'Discord Voice Pro',
@@ -307,6 +307,10 @@ function createWindow() {
 // ============================================================
 // IPC – servidores / calls
 // ============================================================
+
+ipcMain.handle('open-discord-user', (_, userId) => {
+    return shell.openExternal(`discord://-/users/${userId}`);
+});
 
 ipcMain.handle('voice:load-servers', async (_event, { token }) => {
     const nextToken = String(token || '').trim();

@@ -59,4 +59,5 @@ contextBridge.exposeInMainWorld('discordVoice', {
     setMicGain: (percent) => ipcRenderer.invoke('voice:set-mic-gain', percent),
     startMicTest: (deviceId) => ipcRenderer.invoke('voice:start-mic-test', deviceId),
     stopMicTest: () => ipcRenderer.invoke('voice:stop-mic-test'),
+    openDiscordUser: (userId) => ipcRenderer.invoke('open-discord-user', userId)
 });

@@ -391,15 +391,6 @@ function App() {
                     ) : null}
                     <button className="inline-leave"
                         onClick={() => {
-                            window.discordVoice.disconnect?.();
-                            setToken('');
-                            setCurrentUser(null);
-                            setCurrentUserId(null);
-                            setGuilds({});
-                            setSelectedGuildId(null);
-                            setActiveCalls({ allMuted: false, allDeafened: false, calls: [] });
-                            setStatus('Desconectado');
-                            setLoading(false);
                         }}>
                         Logout
                     </button>
@@ -464,11 +455,6 @@ function App() {
                             }
                             onClick={() => window.discordVoice.toggleAllDeafen()}
                         />
-                        <span className="global-voice-hint">
-                            {activeCalls.calls.length
-                                ? `${activeCalls.calls.length} call(s)`
-                                : 'Nenhuma call'}
-                        </span>
                     </div>
                 </div>
 
@@ -621,137 +607,373 @@ function ServersPanel({ guilds, selectedGuildId, activeCalls, onSelect }) {
     );
 }
 
+function VoiceChannelIcon({ muted = false }) {
+    return (
+        <svg
+            className={`voice-channel-icon${muted ? ' muted' : ''}`}
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+        >
+            <path
+                d="M4 9v6h4l5 4V5L8 9H4Z"
+                fill="currentColor"
+            />
+            <path
+                d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+            />
+        </svg>
+    );
+}
+
+function CategoryHeader({ name, collapsed, onClick }) {
+    return (
+        <div
+            className={`voice-category-header${collapsed ? ' collapsed' : ''}`}
+            onClick={onClick}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onClick();
+                }
+            }}
+        >
+            <svg
+                className="category-chevron"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+            >
+                <path
+                    d="M8 5l8 7-8 7"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
+
+            <span>{name || 'Canais de voz'}</span>
+        </div>
+    );
+}
+
 function ChannelsPanel({ guild, currentUserId, activeCalls }) {
     const [query, setQuery] = useState('');
+    const [collapsedCategories, setCollapsedCategories] = useState(
+        new Set()
+    );
+
+    const toggleCategory = (categoryId) => {
+        setCollapsedCategories((previous) => {
+            const next = new Set(previous);
+
+            if (next.has(categoryId)) {
+                next.delete(categoryId);
+            } else {
+                next.add(categoryId);
+            }
+
+            return next;
+        });
+    };
 
     const channels = useMemo(() => {
         if (!guild) return [];
+
         return Object.values(guild.channels)
-            .filter((channel) => canEnterVoiceChannel(guild, channel, currentUserId))
+            .filter(
+                (channel) =>
+                    channel.type === 2 &&
+                    canEnterVoiceChannel(guild, channel, currentUserId)
+            )
             .sort((a, b) => (a.position || 0) - (b.position || 0));
     }, [guild, currentUserId]);
 
-    const filtered = useMemo(() => {
-        const q = normalizeSearch(query);
-        if (!q) return channels;
-        return channels.filter((c) => normalizeSearch(c.name).includes(q));
-    }, [channels, query]);
+    const categories = useMemo(() => {
+        if (!guild) return [];
 
-    // limpa busca ao trocar de servidor
+        return Object.values(guild.categories || {})
+            .sort((a, b) => (a.position || 0) - (b.position || 0));
+    }, [guild]);
+
+    const groupedChannels = useMemo(() => {
+        const q = normalizeSearch(query);
+
+        const matches = q
+            ? channels.filter((channel) =>
+                normalizeSearch(channel.name).includes(q)
+            )
+            : channels;
+
+        const groups = [];
+
+        for (const category of categories) {
+            const categoryChannels = matches
+                .filter((channel) => channel.parent_id === category.id)
+                .sort((a, b) => (a.position || 0) - (b.position || 0));
+
+            if (categoryChannels.length) {
+                groups.push({
+                    category,
+                    channels: categoryChannels
+                });
+            }
+        }
+
+        // Canais sem categoria
+        const uncategorized = matches
+            .filter((channel) => !channel.parent_id)
+            .sort((a, b) => (a.position || 0) - (b.position || 0));
+
+        if (uncategorized.length) {
+            groups.push({
+                category: null,
+                channels: uncategorized
+            });
+        }
+
+        return groups;
+    }, [channels, categories, query]);
+
     useEffect(() => {
         setQuery('');
     }, [guild?.id]);
 
     return (
-        <section className="panel channels-panel">
-            <h2>CANAIS DE VOZ</h2>
-            {
-                guild && channels.length != 0 && <input
+        <section className="panel channels-panel discord-channels-panel">
+            <div className="channels-panel-title">
+                <h2>CANAIS DE VOZ</h2>
+            </div>
+
+            {guild && channels.length ? (
+                <input
                     className="panel-search"
                     type="search"
                     placeholder="Buscar canal..."
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    disabled={!guild}
+                    onChange={(event) => setQuery(event.target.value)}
                     aria-label="Buscar canal de voz"
                 />
-            }
-            <div className="scroll-list">
-                {!guild ? <p className="empty">Selecione um servidor na lateral.</p> : null}
-                {guild ? <h3 className="channel-heading">{guild.name}</h3> : null}
+            ) : null}
+
+            <div className="discord-channel-list">
+                {!guild ? (
+                    <p className="empty">
+                        Selecione um servidor na lateral.
+                    </p>
+                ) : null}
+
                 {guild && !channels.length ? (
-                    <p className="empty">Você não tem permissão para entrar em nenhuma call deste servidor.</p>
+                    <p className="empty">
+                        Você não tem permissão para entrar em nenhuma call deste servidor.
+                    </p>
                 ) : null}
-                {guild && channels.length && !filtered.length ? (
-                    <p className="empty">Nenhum canal encontrado.</p>
+
+                {guild && channels.length && !groupedChannels.length ? (
+                    <p className="empty">
+                        Nenhum canal encontrado.
+                    </p>
                 ) : null}
-                {guild
-                    ? filtered.map((channel) => (
-                        <ChannelCard
-                            key={channel.id}
-                            guild={guild}
-                            channel={channel}
-                            activeCalls={activeCalls}
-                        />
-                    ))
-                    : null}
+
+                {groupedChannels.map((group) => {
+                    const categoryId =
+                        group.category?.id || 'uncategorized';
+
+                    const collapsed =
+                        collapsedCategories.has(categoryId);
+
+                    return (
+                        <div
+                            key={categoryId}
+                            className={`voice-category${collapsed ? ' collapsed' : ''
+                                }`}
+                        >
+                            {group.category ? (
+                                <CategoryHeader
+                                    name={group.category.name}
+                                    collapsed={collapsed}
+                                    onClick={() =>
+                                        toggleCategory(categoryId)
+                                    }
+                                />
+                            ) : null}
+
+                            {!collapsed && (
+                                <div className="voice-category-channels">
+                                    {group.channels.map((channel) => (
+                                        <ChannelCard
+                                            key={channel.id}
+                                            guild={guild}
+                                            channel={channel}
+                                            activeCalls={activeCalls}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         </section>
     );
 }
 
 function ChannelCard({ guild, channel, activeCalls }) {
-    const active = activeEntryForChannel(activeCalls, guild.id, channel.id);
-    const members = Object.values(guild.voiceStates).filter((state) => state.channel_id === channel.id);
+    const active = activeEntryForChannel(
+        activeCalls,
+        guild.id,
+        channel.id
+    );
+
+    const members = Object.values(guild.voiceStates)
+        .filter((state) => state.channel_id === channel.id)
+        .sort((a, b) => {
+            const userA = getStateUser(guild, a);
+            const userB = getStateUser(guild, b);
+
+            const nameA =
+                a.member?.nick ||
+                userA?.global_name ||
+                userA?.username ||
+                '';
+
+            const nameB =
+                b.member?.nick ||
+                userB?.global_name ||
+                userB?.username ||
+                '';
+
+            return nameA.localeCompare(nameB);
+        });
+
+    const hasLimit =
+        Number(channel.user_limit || 0) > 0;
 
     const joinCall = () => {
         window.discordVoice.joinCall({
-            guild: { id: guild.id, name: guild.name },
-            channel: { id: channel.id, name: channel.name }
+            guild: {
+                id: guild.id,
+                name: guild.name
+            },
+            channel: {
+                id: channel.id,
+                name: channel.name
+            }
         });
     };
 
     return (
-        <article className="channel-card" onClick={joinCall}>
-            <div className="channel-header">
-                <button
-                    className={`channel-join${active ? ' connected' : ''}`}
-                    type="button"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        joinCall();
-                    }}
-                >
-                    {active ? `${channel.name}  —  CONECTADO` : channel.name}
-                </button>
+        <div className={`discord-voice-channel${active ? ' active' : ''}`}>
+            <div
+                className="discord-voice-channel-row"
+                role="button"
+                tabIndex={0}
+                onClick={joinCall}
+                onKeyDown={(event) =>
+                    activateWithKeyboard(event, joinCall)
+                }
+            >
+                <VoiceChannelIcon />
+
+                <span className="discord-voice-channel-name">
+                    {channel.name}
+                </span>
+
+                {hasLimit ? (
+                    <span className="voice-channel-limit">
+                        <span className="voice-channel-count">
+                            {String(members.length).padStart(2, '0')}
+                        </span>
+                        <span className="voice-channel-limit-separator">
+                            /
+                        </span>
+                        <span>
+                            {String(channel.user_limit).padStart(2, '0')}
+                        </span>
+                    </span>
+                ) : null}
+
                 {active ? (
-                    <>
-                        <IconButton
-                            icon={active.muted ? micOffIcon : micOnIcon}
-                            title={active.muted ? 'Reativar microfone' : 'Mutar microfone'}
-                            onClick={() => window.discordVoice.toggleCallMute(guild.id)}
-                        />
-                        <IconButton
-                            icon={active.deafened ? deafenOnIcon : deafenOffIcon}
-                            title={active.deafened ? 'Reativar áudio' : 'Ensurdecer'}
-                            onClick={() => window.discordVoice.toggleCallDeafen(guild.id)}
-                        />
-                        <button
-                            className="leave-button"
-                            type="button"
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                window.discordVoice.leaveCall(guild.id);
-                            }}
-                        >
-                            Sair
-                        </button>
-                    </>
+                    <span className="voice-connected-dot" />
                 ) : null}
             </div>
 
-            {!members.length ? <p className="empty">Nenhum membro conectado</p> : null}
-            {members.map((state) => {
-                const user = getStateUser(guild, state);
-                const stateText = [];
-                if (state.self_mute || state.mute) stateText.push('MUTADO');
-                if (state.self_deaf || state.deaf) stateText.push('ENSURDECIDO');
+            {members.length ? (
+                <div className="discord-channel-members">
+                    {members.map((state) => {
+                        const user = getStateUser(guild, state);
 
-                return (
-                    <div key={state.user_id} className="member-row">
-                        <Avatar
-                            className="avatar"
-                            text={user?.global_name || user?.username}
-                            url={userAvatarUrl(user)}
-                        />
-                        <span className="member-name">
-                            {state.member?.nick || user?.global_name || user?.username || 'Usuário desconhecido'}
-                        </span>
-                        {stateText.length ? <span className="member-state">{stateText.join(' / ')}</span> : null}
-                    </div>
-                );
-            })}
-        </article>
+                        const name =
+                            state.member?.nick ||
+                            user?.global_name ||
+                            user?.username ||
+                            'Usuário desconhecido';
+
+                        const muted =
+                            state.self_mute ||
+                            state.mute;
+
+                        const deafened =
+                            state.self_deaf ||
+                            state.deaf;
+
+                        return (
+                            <div
+                                key={state.user_id}
+                                className="discord-voice-member"
+                                onClick={() => {
+                                    window.discordVoice.openDiscordUser(state.user_id);
+                                }}
+                            >
+                                <Avatar
+                                    className="discord-voice-member-avatar"
+                                    text={name}
+                                    url={userAvatarUrl(user, 64)}
+                                />
+
+                                <span className="discord-voice-member-name">
+                                    {name}
+                                </span>
+
+                                {muted ? (
+                                    <span
+                                        className="discord-member-state"
+                                        title="Mutado"
+                                    >
+                                        <img
+                                            src={micOffIcon}
+                                            alt=""
+                                        />
+                                    </span>
+                                ) : null}
+
+                                {deafened ? (
+                                    <span
+                                        className="discord-member-state"
+                                        title="Ensurd ecido"
+                                    >
+                                        <img
+                                            src={deafenOnIcon}
+                                            alt=""
+                                        />
+                                    </span>
+                                ) : null}
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : null}
+        </div>
     );
 }
 

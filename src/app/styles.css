@@ -343,21 +343,11 @@ input:disabled {
     flex: 0 0 auto;
 }
 
-.channel-card,
 .active-card {
     background: #2b2d31;
 }
 
-.channel-card {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px;
-    cursor: pointer;
-}
 
-.channel-header,
-.member-row,
 .active-card {
     display: flex;
     align-items: center;
@@ -679,6 +669,328 @@ input:disabled {
     min-width: auto;
     font-size: 11px;
     padding: 4px 8px;
+}
+
+/* =========================================================
+   CANAIS DE VOZ — ESTILO DISCORD
+   ========================================================= */
+
+.discord-channels-panel {
+    background: #1e1f22;
+}
+
+.channels-panel-title {
+    flex: 0 0 auto;
+}
+
+.channels-panel-title h2 {
+    margin: 0;
+    color: #b5bac1;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.discord-channel-list {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0 2px 8px 2px;
+}
+
+.voice-category {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.voice-category + .voice-category {
+    margin-top: 12px;
+}
+
+.voice-category-header {
+    display: flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 4px 6px;
+    gap: 3px;
+
+    color: #949ba4;
+
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+
+    cursor: pointer;
+    user-select: none;
+}
+
+.voice-category-header:hover {
+    color: #dbdee1;
+}
+
+.category-chevron {
+    flex: 0 0 auto;
+    transition: transform 0.15s ease;
+}
+
+.voice-category-channels {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* ===== CANAL ===== */
+
+.discord-voice-channel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-radius: 4px;
+}
+
+.discord-voice-channel:hover {
+    background: #2b2d31;
+}
+
+.discord-voice-channel.active {
+    background: #2b2d31;
+}
+
+.discord-voice-channel-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 34px;
+    padding: 3px 6px;
+    gap: 7px;
+
+    color: #949ba4;
+
+    border-radius: 4px;
+
+    cursor: pointer;
+    user-select: none;
+}
+
+.discord-voice-channel-row:hover {
+    color: #dbdee1;
+}
+
+.discord-voice-channel.active
+    .discord-voice-channel-row {
+    color: #f2f3f5;
+}
+
+.voice-channel-icon {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    color: #949ba4;
+}
+
+.discord-voice-channel-row:hover
+    .voice-channel-icon {
+    color: #b5bac1;
+}
+
+.discord-voice-channel.active
+    .voice-channel-icon {
+    color: #23a55a;
+}
+
+.discord-voice-channel-name {
+    min-width: 0;
+    flex: 1;
+
+    overflow: hidden;
+
+    color: inherit;
+
+    font-size: 13px;
+    font-weight: 500;
+
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.voice-channel-limit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    flex: 0 0 auto;
+
+    min-width: 40px;
+    height: 20px;
+    padding: 0 5px;
+
+    border-radius: 10px;
+
+    background: #2b2d31;
+
+    color: #949ba4;
+
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.discord-voice-channel-row:hover
+    .voice-channel-limit {
+    background: #404249;
+    color: #b5bac1;
+}
+
+.voice-channel-count {
+    color: #b5bac1;
+}
+
+.voice-channel-limit-separator {
+    margin: 0 2px;
+    color: #6d7077;
+}
+
+.voice-connected-dot {
+    width: 6px;
+    height: 6px;
+
+    flex: 0 0 6px;
+
+    border-radius: 50%;
+
+    background: #23a55a;
+}
+
+/* ===== MEMBROS DA CALL ===== */
+
+.discord-channel-members {
+    display: flex;
+    flex-direction: column;
+
+    margin: 0 0 4px 33px;
+    padding: 0 4px 2px 0;
+
+    min-width: 0;
+}
+
+.discord-voice-member {
+    display: flex;
+    align-items: center;
+
+    min-width: 0;
+    min-height: 30px;
+
+    gap: 8px;
+
+    padding: 2px 4px;
+
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.discord-voice-member:hover {
+    background: #313338;
+}
+
+.discord-voice-member-avatar img {
+    width: 24px;
+    height: 24px;
+
+    flex: 0 0 24px;
+
+    border-radius: 50%;
+
+    background: #5865f2;
+
+    font-size: 10px;
+}
+
+.discord-voice-member-name {
+    min-width: 0;
+    flex: 1;
+
+    overflow: hidden;
+
+    color: #dbdee1;
+
+    font-size: 12px;
+    font-weight: 500;
+
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.discord-member-state {
+    display: inline-flex;
+
+    flex: 0 0 auto;
+
+    width: 15px;
+    height: 15px;
+
+    align-items: center;
+    justify-content: center;
+}
+
+.discord-member-state img {
+    width: 14px;
+    height: 14px;
+
+    object-fit: contain;
+}
+
+/* ===== CONTROLES DA CALL ATIVA ===== */
+
+.discord-voice-active-controls {
+    display: flex;
+
+    align-items: center;
+
+    gap: 5px;
+
+    margin: 0 6px 6px 33px;
+    padding-top: 2px;
+}
+
+.discord-voice-active-controls .icon-button {
+    width: 28px;
+    height: 28px;
+
+    flex-basis: 28px;
+
+    background: #313338;
+}
+
+.discord-voice-active-controls .icon-button:hover {
+    background: #404249;
+}
+
+.discord-voice-active-controls .leave-button {
+    min-height: 28px;
+    margin-left: auto;
+}
+
+/* ===== EMPTY ===== */
+
+.discord-channels-panel .empty {
+    margin: 4px 2px;
+}
+
+.category-chevron {
+    flex: 0 0 auto;
+
+    transition: transform 0.15s ease;
+    transform: rotate(90deg);
+}
+
+.voice-category-header.collapsed .category-chevron {
+    transform: rotate(0deg);
 }
 
 /* ===== RESPONSIVO ===== */
