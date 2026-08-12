@@ -34,8 +34,8 @@
     "vite": "^8.2.1"
   },
   "build": {
-    "appId": "com.discordcalljs.app",
-    "productName": "Discord Call JS",
+    "appId": "me.nemtudo.discordvoicepro",
+    "productName": "Discord Voice Pro",
     "directories": {
       "output": "dist-electron"
     },
