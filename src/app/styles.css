@@ -904,10 +904,12 @@ input:disabled {
     overflow: visible;
     border: 2px solid transparent;
     border-radius: 50%;
+    transition: border-color 100ms ease, box-shadow 100ms ease;
 }
 
 .discord-voice-member-avatar.speaking {
-    outline: 2px solid #23a55a;
+    border-color: #23a55a;
+    box-shadow: 0 0 0 1px rgba(35, 165, 90, 0.25);
 }
 
 .discord-voice-member-avatar img {
@@ -934,6 +936,39 @@ input:disabled {
 
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.discord-member-media {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+    align-items: center;
+    justify-content: center;
+    color: #b5bac1;
+}
+
+.discord-member-video-icon {
+    display: block;
+    width: 15px;
+    height: 15px;
+}
+
+.discord-member-live {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 4px;
+    color: #fff;
+    background: #ed4245;
+    font-size: 8px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.04em;
 }
 
 .discord-member-state {

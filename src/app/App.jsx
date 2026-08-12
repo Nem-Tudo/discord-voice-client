@@ -781,6 +781,36 @@ function VoiceChannelIcon({ muted = false }) {
     );
 }
 
+function CameraIcon() {
+    return (
+        <svg
+            className="discord-member-video-icon"
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+        >
+            <path
+                d="M4 7.5A2.5 2.5 0 0 1 6.5 5h7A2.5 2.5 0 0 1 16 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 4 16.5v-9Z"
+                fill="currentColor"
+            />
+            <path
+                d="m16 10 4-2.5v9L16 14"
+                fill="currentColor"
+            />
+        </svg>
+    );
+}
+
+function StreamBadge() {
+    return (
+        <span className="discord-member-live" title="Transmitindo">
+            LIVE
+        </span>
+    );
+}
+
 function CategoryHeader({ name, collapsed, onClick }) {
     return (
         <div
@@ -1160,6 +1190,19 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
                                 <span className="discord-voice-member-name">
                                     {name}
                                 </span>
+
+                                {state.self_video ? (
+                                    <span
+                                        className="discord-member-media"
+                                        title="Câmera ligada"
+                                    >
+                                        <CameraIcon />
+                                    </span>
+                                ) : null}
+
+                                {state.self_stream ? (
+                                    <StreamBadge />
+                                ) : null}
 
                                 {muted ? (
                                     <span
