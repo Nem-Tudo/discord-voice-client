@@ -163,6 +163,7 @@ function createVoiceClient({
 
     let joinFailureReported = false;
     let joinTimeout = null;
+    let gatewayReconnectTimer = null;
 
 
     // ============================================================
@@ -177,6 +178,10 @@ function createVoiceClient({
     // ============================================================
 
     function connectGateway() {
+        if (intentionalDisconnect) {
+            return;
+        }
+
         if (
             gatewayWs &&
             (
@@ -295,10 +300,15 @@ function createVoiceClient({
                     gatewayWs?.close();
                 } catch (_) { }
 
-                setTimeout(
-                    connectGateway,
-                    1000
-                );
+                clearTimeout(gatewayReconnectTimer);
+
+                gatewayReconnectTimer = setTimeout(() => {
+                    gatewayReconnectTimer = null;
+
+                    if (!intentionalDisconnect) {
+                        connectGateway();
+                    }
+                }, 1000);
 
                 break;
             }
@@ -310,10 +320,15 @@ function createVoiceClient({
                     '[Gateway] sessão inválida, reconectando em 5s...'
                 );
 
-                setTimeout(
-                    connectGateway,
-                    5000
-                );
+                clearTimeout(gatewayReconnectTimer);
+
+                gatewayReconnectTimer = setTimeout(() => {
+                    gatewayReconnectTimer = null;
+
+                    if (!intentionalDisconnect) {
+                        connectGateway();
+                    }
+                }, 5000);
 
                 break;
             }
@@ -1669,6 +1684,12 @@ function createVoiceClient({
     // ============================================================
 
     function finishDisconnect(reason) {
+        clearTimeout(joinTimeout);
+        joinTimeout = null;
+
+        clearTimeout(gatewayReconnectTimer);
+        gatewayReconnectTimer = null;
+
         clearInterval(
             gatewayHeartbeatInterval
         );
@@ -1786,6 +1807,12 @@ function createVoiceClient({
 
         disconnect() {
             intentionalDisconnect = true;
+
+            clearTimeout(joinTimeout);
+            joinTimeout = null;
+
+            clearTimeout(gatewayReconnectTimer);
+            gatewayReconnectTimer = null;
 
             log(
                 '[Voice] saindo da call...'

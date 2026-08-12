@@ -66,10 +66,34 @@ function publishActiveCalls() {
 }
 
 function stopBrowserClient() {
-    if (!browserClient) return;
     const oldClient = browserClient;
     browserClient = null;
-    oldClient.disconnect();
+
+    if (!oldClient) return;
+
+    try {
+        oldClient.disconnect();
+    } catch (error) {
+        log(`[Gateway] erro ao desconectar: ${error.message}`);
+    }
+}
+
+function logout() {
+    // Invalida imediatamente qualquer callback da sessão anterior.
+    activeToken = null;
+
+    stopMicTestInternal();
+    stopAllVoiceClients();
+    stopBrowserClient();
+
+    // Garante que nenhum estado global de voz permaneça para o próximo login.
+    allMuted = false;
+    allDeafened = false;
+
+    publishActiveCalls();
+
+    sendToRenderer('voice:logout');
+    sendToRenderer('voice:status', 'Desconectado');
 }
 
 function stopAllVoiceClients() {
@@ -477,6 +501,11 @@ function createWindow() {
 // ============================================================
 // IPC – servidores / calls
 // ============================================================
+
+ipcMain.handle('voice:logout', async () => {
+    logout();
+    return true;
+});
 
 ipcMain.handle('open-discord-user', (_, userId) => {
     return shell.openExternal(`discord://-/users/${userId}`);

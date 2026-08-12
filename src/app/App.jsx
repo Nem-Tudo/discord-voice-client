@@ -387,6 +387,15 @@ function App() {
                 setCurrentUser(null);
                 setActiveCalls(emptyActiveCalls);
             }),
+            api.onLogout(() => {
+                setGuilds({});
+                setSelectedGuildId(null);
+                setCurrentUserId(null);
+                setCurrentUser(null);
+                setActiveCalls(emptyActiveCalls);
+                setLoading(false);
+                setStatus('Desconectado');
+            }),
             api.onGatewayReady((ready) => {
                 setCurrentUserId(ready.user?.id || null);
                 setCurrentUser(ready.user || null);
@@ -450,6 +459,20 @@ function App() {
         if (logAreaRef.current) logAreaRef.current.scrollTop = logAreaRef.current.scrollHeight;
     }, [logs]);
 
+    async function handleLogout() {
+        if (loading) return;
+
+        setLoading(true);
+
+        try {
+            await window.discordVoice.logout();
+        } catch (error) {
+            console.error('Erro ao fazer logout:', error);
+            setLoading(false);
+            setStatus('Erro ao desconectar.');
+        }
+    }
+
     function loadServers(event) {
         event.preventDefault();
         const nextToken = token.trim();
@@ -488,10 +511,14 @@ function App() {
                             {activeCalls.calls.length > 1 ? 's' : ''}
                         </span>
                     ) : null}
-                    <button className="inline-leave"
-                        onClick={() => {
-                        }}>
-                        Logout
+                    <button
+                        type="button"
+                        className="inline-leave"
+                        onClick={handleLogout}
+                        disabled={loading}
+                        aria-busy={loading}
+                    >
+                        {loading ? 'Saindo...' : 'Logout'}
                     </button>
                 </header>
             ) : null}

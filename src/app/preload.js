@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     loadServers(data) {
         return ipcRenderer.invoke('voice:load-servers', data);
     },
+    logout() {
+        return ipcRenderer.invoke('voice:logout');
+    },
     joinCall(data) {
         return ipcRenderer.invoke('voice:join-call', data);
     },
@@ -41,6 +44,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     },
     onBrowserReset(callback) {
         return subscribe('voice:browser-reset', callback);
+    },
+    onLogout(callback) {
+        return subscribe('voice:logout', callback);
     },
     onGatewayReady(callback) {
         return subscribe('voice:gateway-ready', callback);
