@@ -82,6 +82,8 @@ function createVoiceClient({
     let lastSeq = null;
 
     let botUserId = null;
+    let activeGuildId = guildId || null;
+    let activeChannelId = channelId || null;
 
 
     // ============================================================
@@ -95,6 +97,8 @@ function createVoiceClient({
     let voiceWs = null;
     let voiceHeartbeatInterval = null;
     let lastVoiceSeq = -1;
+    let switchingVoiceChannel = false;
+    let pendingVoiceJoin = null;
 
     let udpSocket = null;
 
@@ -346,7 +350,7 @@ function createVoiceClient({
                     onGatewayReady(d);
                 }
 
-                if (guildId && channelId) {
+                if (activeGuildId && activeChannelId) {
                     joinVoiceChannel();
                 }
 
@@ -369,7 +373,11 @@ function createVoiceClient({
                  * Discord envia nosso próprio session_id
                  * através desse evento.
                  */
-                if (d.user_id === botUserId) {
+                if (
+                    d.user_id === botUserId &&
+                    d.guild_id === activeGuildId &&
+                    d.channel_id === activeChannelId
+                ) {
                     voiceSessionId = d.session_id;
 
                     maybeConnectVoice();
@@ -387,6 +395,12 @@ function createVoiceClient({
 
 
             case 'VOICE_SERVER_UPDATE': {
+                // Um VOICE_SERVER_UPDATE atrasado do canal anterior não pode
+                // ser usado para abrir a sessão recém-selecionada.
+                if (d.guild_id && d.guild_id !== activeGuildId) {
+                    break;
+                }
+
                 voiceServerToken = d.token;
                 voiceEndpoint = d.endpoint;
 
@@ -417,16 +431,60 @@ function createVoiceClient({
     }
 
 
-    function joinVoiceChannel() {
+    function joinVoiceChannel(nextGuildId = activeGuildId, nextChannelId = activeChannelId) {
+        if (!nextGuildId || !nextChannelId) {
+            log('[Gateway] selecione um servidor e um canal de voz.');
+            return;
+        }
+
+        if (
+            nextGuildId === activeGuildId &&
+            nextChannelId === activeChannelId &&
+            sessionEstablished
+        ) {
+            return;
+        }
+
+        if (voiceWs && (
+            voiceWs.readyState === WebSocket.OPEN ||
+            voiceWs.readyState === WebSocket.CONNECTING
+        )) {
+            // Fecha apenas a sessão de voz atual. O Gateway principal segue
+            // autenticado e conecta ao próximo canal depois do fechamento.
+            pendingVoiceJoin = { guildId: nextGuildId, channelId: nextChannelId };
+            switchingVoiceChannel = true;
+
+            // Atualiza o destino antes do fechamento. Assim, eventos que o
+            // Discord ainda enviar sobre o canal antigo são ignorados.
+            activeGuildId = nextGuildId;
+            activeChannelId = nextChannelId;
+            clearInterval(voiceHeartbeatInterval);
+            voiceHeartbeatInterval = null;
+            if (udpSocket) {
+                try { udpSocket.removeAllListeners(); udpSocket.close(); } catch (_) { }
+                udpSocket = null;
+            }
+            voiceWs.close();
+            voiceWs = null;
+            voiceSessionId = null;
+            voiceServerToken = null;
+            voiceEndpoint = null;
+            sessionEstablished = false;
+            return;
+        }
+
+        activeGuildId = nextGuildId;
+        activeChannelId = nextChannelId;
+
         log(
-            `[Gateway] entrando no canal de voz ${channelId}...`
+            `[Gateway] entrando no canal de voz ${activeChannelId}...`
         );
 
         sendGateway(
             4,
             {
-                guild_id: guildId,
-                channel_id: channelId,
+                guild_id: activeGuildId,
+                channel_id: activeChannelId,
 
                 self_mute: selfMute,
                 self_deaf: selfDeaf
@@ -513,6 +571,16 @@ function createVoiceClient({
             );
 
             voiceHeartbeatInterval = null;
+
+            if (switchingVoiceChannel) {
+                switchingVoiceChannel = false;
+                const nextJoin = pendingVoiceJoin;
+                pendingVoiceJoin = null;
+                if (nextJoin) {
+                    joinVoiceChannel(nextJoin.guildId, nextJoin.channelId);
+                }
+                return;
+            }
 
             if (!intentionalDisconnect) {
                 finishDisconnect(
@@ -617,7 +685,7 @@ function createVoiceClient({
                 sendVoice(
                     VoiceOp.IDENTIFY,
                     {
-                        server_id: guildId,
+                        server_id: activeGuildId,
                         user_id: botUserId,
                         session_id: voiceSessionId,
                         token: voiceServerToken,
@@ -1275,14 +1343,14 @@ function createVoiceClient({
                 daveSession.reinit(
                     daveProtocolVersion,
                     botUserId,
-                    channelId
+                    activeChannelId
                 );
             } else {
                 daveSession =
                     new DAVESession(
                         daveProtocolVersion,
                         botUserId,
-                        channelId
+                        activeChannelId
                     );
             }
 
@@ -1698,6 +1766,11 @@ function createVoiceClient({
         },
 
 
+        joinVoiceChannel(guildIdToJoin, channelIdToJoin) {
+            joinVoiceChannel(guildIdToJoin, channelIdToJoin);
+        },
+
+
         disconnect() {
             intentionalDisconnect = true;
 
@@ -1712,7 +1785,7 @@ function createVoiceClient({
             sendGateway(
                 4,
                 {
-                    guild_id: guildId,
+                    guild_id: activeGuildId,
                     channel_id: null,
                     self_mute: false,
                     self_deaf: false
@@ -1745,8 +1818,8 @@ function createVoiceClient({
             sendGateway(
                 4,
                 {
-                    guild_id: guildId,
-                    channel_id: channelId,
+                    guild_id: activeGuildId,
+                    channel_id: activeChannelId,
 
                     self_mute: selfMute,
                     self_deaf: selfDeaf
@@ -1765,8 +1838,8 @@ function createVoiceClient({
             sendGateway(
                 4,
                 {
-                    guild_id: guildId,
-                    channel_id: channelId,
+                    guild_id: activeGuildId,
+                    channel_id: activeChannelId,
 
                     self_mute: selfMute,
                     self_deaf: selfDeaf
