@@ -17,11 +17,13 @@ const FRAME_SAMPLES_PER_CHANNEL = 960;
 const EXPECTED_PCM_SIZE = FRAME_SAMPLES_PER_CHANNEL * CHANNELS * 2; // 3840 bytes (Int16)
 
 class AudioPlayer {
-    constructor(onLog) {
+    constructor(onLog, onSpeaking) {
         this.log = onLog || console.log;
+        this.onSpeaking = typeof onSpeaking === 'function' ? onSpeaking : null;
         this.isInitialized = false;
         this.isDestroyed = false;
-        this.userStreams = new Map(); // ssrc -> { decoder, rtAudio, ready }
+        this.userStreams = new Map(); // ssrc -> { decoder, rtAudio, ready, speaking, lastVoiceAt, releaseTimer }
+        this._ssrcUserIds = new Map();
 
         this.debugFlags = {
             firstPacket: false,
@@ -92,7 +94,10 @@ class AudioPlayer {
             decoder,
             rtAudio,
             ready: false,
-            readyPromise
+            readyPromise,
+            speaking: false,
+            lastVoiceAt: 0,
+            releaseTimer: null
         };
 
         this.userStreams.set(ssrc, entry);
@@ -203,6 +208,73 @@ class AudioPlayer {
         return pcm;
     }
 
+    _updateVoiceActivity(ssrc, userId, pcmData) {
+        if (!this.onSpeaking || !pcmData || pcmData.length < 4) return;
+
+        // RMS em Int16 estéreo. O SPEAKING do Gateway indica transmissão,
+        // não necessariamente que existe voz naquele instante. Para a UI
+        // usamos a energia real do PCM já decodificado.
+        const samples = new Int16Array(
+            pcmData.buffer,
+            pcmData.byteOffset,
+            Math.floor(pcmData.byteLength / 2)
+        );
+
+        let sumSquares = 0;
+        for (let i = 0; i < samples.length; i++) {
+            const normalized = samples[i] / 32768;
+            sumSquares += normalized * normalized;
+        }
+
+        const rms = Math.sqrt(sumSquares / samples.length);
+        const threshold = 0.012; // ~ -38 dBFS
+        const now = Date.now();
+
+        let state = this.userStreams.get(ssrc);
+        if (!state) return;
+
+        if (rms >= threshold) {
+            state.lastVoiceAt = now;
+
+            if (state.releaseTimer) {
+                clearTimeout(state.releaseTimer);
+                state.releaseTimer = null;
+            }
+
+            if (!state.speaking) {
+                state.speaking = true;
+                this.onSpeaking({
+                    user_id: String(userId),
+                    ssrc: Number(ssrc),
+                    speaking: true
+                });
+            }
+
+            return;
+        }
+
+        if (!state.speaking || state.releaseTimer) return;
+
+        // Pequena retenção para evitar piscar entre frames de voz/silêncio.
+        state.releaseTimer = setTimeout(() => {
+            state.releaseTimer = null;
+
+            if (this.isDestroyed) return;
+
+            const current = this.userStreams.get(ssrc);
+            if (!current || !current.speaking) return;
+
+            if (Date.now() - current.lastVoiceAt >= 160) {
+                current.speaking = false;
+                this.onSpeaking({
+                    user_id: String(userId),
+                    ssrc: Number(ssrc),
+                    speaking: false
+                });
+            }
+        }, 180);
+    }
+
     async processPacket(
         msg,
         daveSession,
@@ -224,6 +296,7 @@ class AudioPlayer {
         const ssrc = msg.readUInt32BE(8);
         const userId = ssrcMap.get(ssrc);
         if (!userId) return;
+        this._ssrcUserIds.set(ssrc, String(userId));
 
         if (!this.debugFlags.firstPacket) {
             this.log(`[Áudio-Debug] (1/4) Primeiro pacote recebido do usuário SSRC: ${ssrc}!`);
@@ -325,7 +398,10 @@ class AudioPlayer {
                 return;
             }
 
-            // 6. PCM → SPEAKER
+            // 6. Detecta atividade real de voz para a UI.
+            this._updateVoiceActivity(ssrc, userId, pcmData);
+
+            // 7. PCM → SPEAKER
             try {
                 rtAudio.write(pcmData);
             } catch (e) {
@@ -345,6 +421,21 @@ class AudioPlayer {
         if (!entry) return;
 
         const { decoder, rtAudio } = entry;
+
+        if (entry.releaseTimer) {
+            clearTimeout(entry.releaseTimer);
+            entry.releaseTimer = null;
+        }
+
+        if (entry.speaking && this.onSpeaking) {
+            try {
+                this.onSpeaking({
+                    user_id: String(this._ssrcUserIds?.get?.(ssrc) || ''),
+                    ssrc: Number(ssrc),
+                    speaking: false
+                });
+            } catch (_) { }
+        }
 
         try {
             decoder.free();
@@ -367,6 +458,7 @@ class AudioPlayer {
             this.releaseSsrc(ssrc);
         }
         this.userStreams.clear();
+        this._ssrcUserIds.clear();
         this.isInitialized = false;
         this.isDestroyed = false;
         for (const key in this.debugFlags) {
@@ -381,6 +473,7 @@ class AudioPlayer {
             this.releaseSsrc(ssrc);
         }
         this.userStreams.clear();
+        this._ssrcUserIds.clear();
         this.isInitialized = false;
 
         for (const key in this.debugFlags) {

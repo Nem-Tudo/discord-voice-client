@@ -36,6 +36,12 @@ class AudioSender {
 
         this.deviceId = null;
         this.gainPercent = 100;
+
+        // VAD local: informa quando o áudio capturado contém voz/som significativo.
+        this.onSpeakingChange = null;
+        this.localSpeaking = false;
+        this.localSpeakingUntil = 0;
+        this.localVadLastChange = 0;
     }
 
     /**
@@ -197,6 +203,58 @@ class AudioSender {
         this.daveSession = session || null;
     }
 
+    setSpeakingCallback(callback) {
+        this.onSpeakingChange = typeof callback === 'function' ? callback : null;
+    }
+
+    _setLocalSpeaking(value) {
+        const next = Boolean(value);
+        if (next === this.localSpeaking) return;
+        this.localSpeaking = next;
+        this.localVadLastChange = Date.now();
+        try {
+            this.onSpeakingChange?.(next);
+        } catch (_) { }
+    }
+
+    _updateLocalVad(pcmBuffer) {
+        if (!pcmBuffer || pcmBuffer.length < 2 || !this.speaking) {
+            this.localSpeakingUntil = 0;
+            this._setLocalSpeaking(false);
+            return;
+        }
+
+        const samples = new Int16Array(
+            pcmBuffer.buffer,
+            pcmBuffer.byteOffset,
+            Math.floor(pcmBuffer.byteLength / 2)
+        );
+
+        let sumSquares = 0;
+        let peak = 0;
+        for (let i = 0; i < samples.length; i++) {
+            const v = samples[i];
+            const a = Math.abs(v);
+            if (a > peak) peak = a;
+            sumSquares += v * v;
+        }
+
+        const rms = Math.sqrt(sumSquares / Math.max(1, samples.length));
+
+        // Histerese: liga com ~700 RMS e desliga abaixo de ~450 RMS.
+        // Isso evita que ruído baixo do microfone deixe a borda piscando.
+        const threshold = this.localSpeaking ? 450 : 700;
+        const hasVoice = rms >= threshold || peak >= 1800;
+        const now = Date.now();
+
+        if (hasVoice) {
+            this.localSpeakingUntil = now + 180;
+            this._setLocalSpeaking(true);
+        } else if (this.localSpeaking && now >= this.localSpeakingUntil) {
+            this._setLocalSpeaking(false);
+        }
+    }
+
     _openInputStream() {
         if (this.rtAudio) {
             try {
@@ -227,7 +285,12 @@ class AudioSender {
         );
 
         this.rtAudio.setInputCallback((pcm) => {
-            if (this.isDestroyed || !this.speaking) return;
+            if (this.isDestroyed || !this.speaking) {
+                this._setLocalSpeaking(false);
+                return;
+            }
+
+            this._updateLocalVad(pcm);
             this._processAndSend(pcm);
         });
 

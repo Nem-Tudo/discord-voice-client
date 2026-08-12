@@ -382,6 +382,16 @@ function startVoiceCall(guild, channel, {
                 }
             }
         },
+        onSpeaking: (speaking) => {
+            if (voiceClients.get(guild.id) !== entry) return;
+            if (!speaking?.user_id) return;
+
+            sendToRenderer('voice:speaking', {
+                guild_id: guild.id,
+                user_id: String(speaking.user_id),
+                speaking: Boolean(speaking.speaking)
+            });
+        },
         onReady: () => {
             entry.status = 'connected';
             entry.error = null;

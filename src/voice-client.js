@@ -66,6 +66,7 @@ function createVoiceClient({
     onGatewayReady,
     onGuildCreate,
     onVoiceStateUpdate,
+    onSpeaking,
     onReady,
     onDisconnected,
     onJoinError
@@ -79,6 +80,17 @@ function createVoiceClient({
     };
 
     const audioSender = new AudioSender(log);
+
+    // VAD do próprio microfone: a UI recebe o mesmo evento usado pelos
+    // participantes remotos, mas filtrado por esta guild.
+    audioSender.setSpeakingCallback((speaking) => {
+        if (!botUserId || !onSpeaking) return;
+        onSpeaking({
+            guild_id: guildId,
+            user_id: String(botUserId),
+            speaking: Boolean(speaking)
+        });
+    });
 
     // Preferências de microfone (podem ser alteradas antes ou depois do init)
     let preferredDeviceId = deviceId ?? null;
@@ -172,7 +184,16 @@ function createVoiceClient({
     // ÁUDIO
     // ============================================================
 
-    const audioPlayer = new AudioPlayer(log);
+    const audioPlayer = new AudioPlayer(log, (activity) => {
+        if (typeof onSpeaking === 'function' && activity?.user_id) {
+            onSpeaking({
+                guild_id: guildId,
+                user_id: String(activity.user_id),
+                ssrc: activity.ssrc,
+                speaking: Boolean(activity.speaking)
+            });
+        }
+    });
 
 
     // ============================================================
@@ -763,10 +784,11 @@ function createVoiceClient({
                         remoteUserId
                     );
 
-                    if (
+                    const isSpeaking =
                         d.speaking === 1 ||
-                        d.speaking === 5
-                    ) {
+                        d.speaking === 5;
+
+                    if (isSpeaking) {
                         log(
                             `[Voice-Debug] Usuário ${remoteUserId} ` +
                             `(SSRC: ${remoteSsrc}) ABRIU o microfone.`
@@ -779,6 +801,11 @@ function createVoiceClient({
                             `(SSRC: ${remoteSsrc}) FECHOU o microfone.`
                         );
                     }
+
+                    // O SPEAKING do Gateway indica que o cliente está
+                    // transmitindo mídia, mas não significa necessariamente
+                    // que há voz naquele instante. A UI usa VAD no PCM
+                    // decodificado (AudioPlayer) para ligar/desligar a borda.
                 }
 
                 break;

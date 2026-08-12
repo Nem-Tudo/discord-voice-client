@@ -437,6 +437,30 @@ function App() {
                     return { ...previous, [nextGuild.id]: nextGuild };
                 });
             }),
+            api.onSpeaking((speaking) => {
+                if (!speaking?.guild_id || !speaking?.user_id) return;
+
+                setGuilds((previous) => {
+                    const guild = previous[speaking.guild_id];
+                    if (!guild) return previous;
+
+                    const state = guild.voiceStates[speaking.user_id];
+                    if (!state) return previous;
+
+                    const nextGuild = {
+                        ...guild,
+                        voiceStates: {
+                            ...guild.voiceStates,
+                            [speaking.user_id]: {
+                                ...state,
+                                speaking: Boolean(speaking.speaking)
+                            }
+                        }
+                    };
+
+                    return { ...previous, [nextGuild.id]: nextGuild };
+                });
+            }),
             api.onActiveCalls((payload) => setActiveCalls(payload || emptyActiveCalls)),
             api.onStatus((nextStatus) => {
                 setStatus(nextStatus || '');
@@ -1128,7 +1152,7 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId }) {
                                 }}
                             >
                                 <Avatar
-                                    className="discord-voice-member-avatar"
+                                    className={`discord-voice-member-avatar${state.speaking ? ' speaking' : ''}`}
                                     text={name}
                                     url={userAvatarUrl(user, 64)}
                                 />

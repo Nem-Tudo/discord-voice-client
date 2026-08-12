@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     onVoiceStateUpdate(callback) {
         return subscribe('voice:voice-state', callback);
     },
+    onSpeaking(callback) {
+        return subscribe('voice:speaking', callback);
+    },
     onActiveCalls(callback) {
         return subscribe('voice:active-calls', callback);
     },

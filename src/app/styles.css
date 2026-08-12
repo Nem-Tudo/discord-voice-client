@@ -894,12 +894,26 @@ input:disabled {
     background: #313338;
 }
 
-.discord-voice-member-avatar img {
+.discord-voice-member-avatar {
     width: 24px;
     height: 24px;
-
     flex: 0 0 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    border: 2px solid transparent;
+    border-radius: 50%;
+}
 
+.discord-voice-member-avatar.speaking {
+    outline: 2px solid #23a55a;
+}
+
+.discord-voice-member-avatar img {
+    width: 100%;
+    height: 100%;
+    flex: 0 0 auto;
     border-radius: 50%;
 
     background: #5865f2;
