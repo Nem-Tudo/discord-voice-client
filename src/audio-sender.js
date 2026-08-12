@@ -20,10 +20,12 @@ class AudioSender {
         this.log = log || console.log;
         this.isInitialized = false;
         this.isDestroyed = false;
+        this._initPromise = null;
 
         this.encoder = null;
         this.rtAudio = null;
         this.speaking = false;
+        this.desiredSpeaking = false;
         this.sequence = 0;
         this.timestamp = 0;
         this.ssrc = null;
@@ -161,6 +163,19 @@ class AudioSender {
         deviceId = null,
         gainPercent = 100
     }) {
+        if (this.isInitialized) {
+            this.updateTransport({ ssrc, udpSocket, voiceIp, voicePort, secretKey, encryptionMode, daveSession, botUserId, sendVoice });
+            this.setDevice(deviceId);
+            this.setGain(gainPercent);
+            return true;
+        }
+        if (this._initPromise) {
+            this.updateTransport({ ssrc, udpSocket, voiceIp, voicePort, secretKey, encryptionMode, daveSession, botUserId, sendVoice });
+            this.deviceId = deviceId;
+            this.gainPercent = Math.max(0, Math.min(2000, Number(gainPercent) || 100));
+            this.gainProcessor.setGain(this.gainPercent);
+            return this._initPromise;
+        }
         if (!audify) {
             this.log('[Áudio-Sender] ERRO: audify não encontrado');
             return false;
@@ -179,25 +194,40 @@ class AudioSender {
         this.gainPercent = Math.max(0, Math.min(2000, Number(gainPercent) || 100));
         this.gainProcessor.setGain(this.gainPercent);
 
-        // RNNoise é inicializado antes do callback de captura começar.
-        await this.rnnoiseProcessor.init();
+        this._initPromise = (async () => {
+            // RNNoise is optional and must never block joining a call.
+            // If enabled, load it in the background while the capture path
+            // is brought up. Until WASM is ready, audio passes through.
+            if (this.rnnoiseProcessor.enabled) {
+                this.rnnoiseProcessor.init().catch(() => {});
+            }
 
-        const { OpusEncoder, OpusApplication } = audify;
-        this.encoder = new OpusEncoder(
-            SAMPLE_RATE,
-            CHANNELS,
-            OpusApplication.OPUS_APPLICATION_VOIP
-        );
+            const { OpusEncoder, OpusApplication } = audify;
+            this.encoder = new OpusEncoder(
+                SAMPLE_RATE,
+                CHANNELS,
+                OpusApplication.OPUS_APPLICATION_VOIP
+            );
 
-        try {
-            this.encoder.setBitrate(BITRATE);
-        } catch (_) { }
+            try {
+                this.encoder.setBitrate(BITRATE);
+            } catch (_) { }
 
-        this._openInputStream();
+            this._openInputStream();
 
-        this.isInitialized = true;
-        this.log(`[Áudio-Sender] Microfone pronto (ganho=${this.gainPercent}%)`);
-        return true;
+            this.isInitialized = true;
+            this.log(`[Áudio-Sender] Microfone pronto (ganho=${this.gainPercent}%)`);
+
+            // If the user clicked the mic before initialization completed,
+            // preserve that intent and start as soon as capture exists.
+            if (this.desiredSpeaking && !this.isDestroyed) this.startSpeaking();
+            return true;
+        })().catch((error) => {
+            this._initPromise = null;
+            throw error;
+        });
+
+        return this._initPromise;
     }
 
     updateTransport({ ssrc, udpSocket, voiceIp, voicePort, secretKey, encryptionMode, daveSession, botUserId, sendVoice }) {
@@ -318,6 +348,10 @@ class AudioSender {
             return;
         }
 
+        const current = this.deviceId == null ? null : Number(this.deviceId);
+        const next = deviceId == null ? null : Number(deviceId);
+        if (current === next) return;
+
         const wasSpeaking = this.speaking;
         if (wasSpeaking) this.stopSpeaking();
 
@@ -336,9 +370,16 @@ class AudioSender {
     }
 
     setNoiseSuppressionEnabled(enabled = true) {
-        this.rnnoiseProcessor.enabled = Boolean(enabled);
-        this.log(`[RNNoise] Supressão de ruído ${this.rnnoiseProcessor.enabled ? 'ativada' : 'desativada'}.`);
-        return this.rnnoiseProcessor.enabled;
+        const next = Boolean(enabled);
+        this.rnnoiseProcessor.enabled = next;
+        this.log(`[RNNoise] Supressão de ruído ${next ? 'ativada' : 'desativada'}.`);
+
+        // Enabling suppression after the call has started should load WASM
+        // asynchronously; never stall the capture thread or call setup.
+        if (next && !this.rnnoiseProcessor.available && !this.isDestroyed) {
+            this.rnnoiseProcessor.init().catch(() => {});
+        }
+        return next;
     }
 
     isNoiseSuppressionEnabled() {
@@ -362,6 +403,7 @@ class AudioSender {
     }
 
     startSpeaking() {
+        this.desiredSpeaking = true;
         if (this.speaking || !this.isInitialized) return;
         this.speaking = true;
 
@@ -375,6 +417,7 @@ class AudioSender {
     }
 
     stopSpeaking() {
+        this.desiredSpeaking = false;
         if (!this.speaking) return;
         this.speaking = false;
 
@@ -482,6 +525,7 @@ class AudioSender {
 
     destroy() {
         this.isDestroyed = true;
+        this.desiredSpeaking = false;
         this.stopSpeaking();
 
         try {
@@ -493,6 +537,7 @@ class AudioSender {
         this.encoder = null;
         this.audioPipeline.destroy();
         this.isInitialized = false;
+        this._initPromise = null;
         this.log('[Áudio-Sender] destruído');
     }
 }

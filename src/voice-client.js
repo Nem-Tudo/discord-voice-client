@@ -862,14 +862,15 @@ function createVoiceClient({
                  */
 
                 /*
-                 * Inicializa áudio depois que toda a sessão
-                 * de transporte está pronta.
+                 * O transporte de voz já está pronto. A UI não deve esperar
+                 * RNNoise/WASM + RtAudio para considerar a call conectada.
+                 * Inicializamos a captura em paralelo e preservamos qualquer
+                 * pedido de ligar o microfone feito durante essa janela.
                  */
                 if (!audioPlayer.isInitialized) {
                     audioPlayer.init();
                 }
 
-                // Inicializa o sender (microfone) com device + ganho
                 if (!audioSender.isInitialized) {
                     audioSender.init({
                         ssrc,
@@ -884,19 +885,13 @@ function createVoiceClient({
                         deviceId: preferredDeviceId,
                         gainPercent: preferredGainPercent
                     }).then(() => {
-                        if (intentionalDisconnect) return;
-
-                        if (onReady) {
-                            onReady();
+                        if (!intentionalDisconnect) {
+                            log('[Áudio-Sender] inicialização em background concluída.');
                         }
                     }).catch((error) => {
                         log(`[Áudio-Sender] Falha ao inicializar microfone: ${error.message}`);
-                        if (onJoinError) {
-                            onJoinError(`Não foi possível inicializar o microfone: ${error.message}`);
-                        }
                     });
                 } else {
-                    // Após uma movimentação, o sender precisa apontar para o novo UDP/crypto.
                     if (typeof audioSender.updateTransport === 'function') {
                         audioSender.updateTransport({
                             ssrc,
@@ -914,9 +909,8 @@ function createVoiceClient({
                     audioSender.setGain(preferredGainPercent);
                 }
 
-                if (audioSender.isInitialized && onReady) {
-                    onReady();
-                }
+                // Entrar na call depende do transporte, não do carregamento do mic.
+                if (onReady) onReady();
 
                 break;
             }
