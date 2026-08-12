@@ -281,6 +281,7 @@ function createWindow() {
         minHeight: 560,
         title: 'Discord Voice Pro',
         backgroundColor: '#313338',
+        icon: "./assets/logo.png",
         webPreferences: {
             preload: path.join(__dirname, 'src', 'app', 'preload.js'),
             contextIsolation: true,
