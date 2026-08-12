@@ -887,6 +887,17 @@ function createVoiceClient({
                         sendVoice,
                         deviceId: preferredDeviceId,
                         gainPercent: preferredGainPercent
+                    }).then(() => {
+                        if (intentionalDisconnect) return;
+
+                        if (onReady) {
+                            onReady();
+                        }
+                    }).catch((error) => {
+                        log(`[Áudio-Sender] Falha ao inicializar microfone: ${error.message}`);
+                        if (onJoinError) {
+                            onJoinError(`Não foi possível inicializar o microfone: ${error.message}`);
+                        }
                     });
                 } else {
                     // Após uma movimentação, o sender precisa apontar para o novo UDP/crypto.
@@ -907,7 +918,7 @@ function createVoiceClient({
                     audioSender.setGain(preferredGainPercent);
                 }
 
-                if (onReady) {
+                if (audioSender.isInitialized && onReady) {
                     onReady();
                 }
 

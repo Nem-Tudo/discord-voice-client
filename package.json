@@ -19,6 +19,7 @@
   },
   "keywords": [],
   "dependencies": {
+    "@echogarden/rnnoise-wasm": "^0.2.0",
     "@snazzah/davey": "^0.1.12",
     "audify": "^1.10.1",
     "dgram": "^1.0.1",

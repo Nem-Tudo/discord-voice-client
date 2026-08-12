@@ -5,6 +5,9 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 
 const { createVoiceClient } = require('./src/voice-client.js');
 const { AudioSender } = require('./src/audio-sender.js');
+const { AudioPipeline } = require('./src/audio/audio-pipeline.js');
+const { RnnoiseProcessor } = require('./src/audio/rnnoise-processor.js');
+const { GainProcessor } = require('./src/audio/gain-processor.js');
 
 const [, , ARG_TOKEN] = process.argv;
 
@@ -24,6 +27,8 @@ let selectedMicGain = 100;
 /** Stream de teste de microfone (loopback) */
 let micTestRtAudio = null;
 let micTestGainPercent = 100;
+let micTestPipeline = null;
+let micTestGainProcessor = null;
 
 const voiceClients = new Map();
 
@@ -114,36 +119,19 @@ function stopAllVoiceClients() {
 }
 
 function stopMicTestInternal() {
-    if (!micTestRtAudio) return;
+    if (micTestRtAudio) {
+        try { micTestRtAudio.stop(); } catch (_) { }
+        try { micTestRtAudio.closeStream(); } catch (_) { }
+        micTestRtAudio = null;
+    }
 
-    try {
-        micTestRtAudio.stop();
-    } catch (_) { }
-
-    try {
-        micTestRtAudio.closeStream();
-    } catch (_) { }
-
-    micTestRtAudio = null;
+    micTestPipeline?.destroy?.();
+    micTestPipeline = null;
+    micTestGainProcessor = null;
     log('[Mic-Test] Teste de microfone parado.');
 }
 
-function applyGainToPcm(pcm, gainPercent) {
-    const gain = (gainPercent || 100) / 100;
-    if (gain === 1) return pcm;
-
-    const buf = Buffer.from(pcm);
-    const samples = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
-    for (let i = 0; i < samples.length; i++) {
-        let v = samples[i] * gain;
-        if (v > 32767) v = 32767;
-        else if (v < -32768) v = -32768;
-        samples[i] = v | 0;
-    }
-    return buf;
-}
-
-function startMicTestInternal(deviceId) {
+async function startMicTestInternal(deviceId) {
     stopMicTestInternal();
 
     let audify = null;
@@ -159,6 +147,15 @@ function startMicTestInternal(deviceId) {
     const FRAME_SIZE = 960;
 
     try {
+        micTestPipeline = new AudioPipeline({ frameSize: FRAME_SIZE, channels: CHANNELS, log });
+        const rnnoise = new RnnoiseProcessor(log);
+        const gain = new GainProcessor(selectedMicGain);
+        micTestPipeline.addProcessor('rnnoise', rnnoise);
+        micTestPipeline.addProcessor('gain', gain);
+        micTestGainProcessor = gain;
+
+        await rnnoise.init();
+
         micTestRtAudio = new audify.RtAudio();
 
         const devices = micTestRtAudio.getDevices();
@@ -178,8 +175,9 @@ function startMicTestInternal(deviceId) {
         const outName = devices[outId]?.name || `ID ${outId}`;
 
         micTestGainPercent = selectedMicGain;
+        gain.setGain(micTestGainPercent);
 
-        log(`[Mic-Test] Capturando: "${deviceName}" → reproduzindo em: "${outName}" (ganho=${micTestGainPercent}%)`);
+        log(`[Mic-Test] Capturando: "${deviceName}" → reproduzindo em: "${outName}" (RNNoise=${rnnoise.enabled && rnnoise.available ? 'ON' : 'OFF'}, ganho=${micTestGainPercent}%)`);
 
         micTestRtAudio.openStream(
             {
@@ -199,11 +197,12 @@ function startMicTestInternal(deviceId) {
         );
 
         micTestRtAudio.setInputCallback((pcm) => {
-            if (!micTestRtAudio) return;
+            if (!micTestRtAudio || !micTestPipeline) return;
             try {
-                const gained = applyGainToPcm(pcm, micTestGainPercent);
-                micTestRtAudio.write(gained);
-            } catch (_) { }
+                micTestRtAudio.write(micTestPipeline.processFrame(pcm));
+            } catch (error) {
+                log(`[Mic-Test] Erro processando áudio: ${error.message}`);
+            }
         });
 
         micTestRtAudio.start();
@@ -788,6 +787,7 @@ ipcMain.handle('voice:set-mic-gain', async (_event, percent) => {
     if (Number.isNaN(value)) value = 100;
     selectedMicGain = Math.max(0, Math.min(2000, Math.round(value)));
     micTestGainPercent = selectedMicGain;
+    micTestGainProcessor?.setGain(selectedMicGain);
 
     log(`[Mic] Ganho definido: ${selectedMicGain}%`);
 

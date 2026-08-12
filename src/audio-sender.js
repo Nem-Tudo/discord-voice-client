@@ -1,6 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
+const { AudioPipeline } = require('./audio/audio-pipeline');
+const { RnnoiseProcessor } = require('./audio/rnnoise-processor');
+const { GainProcessor } = require('./audio/gain-processor');
 
 let audify = null;
 try {
@@ -36,6 +39,15 @@ class AudioSender {
 
         this.deviceId = null;
         this.gainPercent = 100;
+
+        // Pipeline modular: microfone -> RNNoise -> ganho -> Opus.
+        // Fontes futuras (música, SFX, etc.) podem ser adicionadas ao pipeline
+        // sem alterar o transporte Discord.
+        this.audioPipeline = new AudioPipeline({ log: this.log });
+        this.rnnoiseProcessor = new RnnoiseProcessor(this.log);
+        this.gainProcessor = new GainProcessor(100);
+        this.audioPipeline.addProcessor('rnnoise', this.rnnoiseProcessor);
+        this.audioPipeline.addProcessor('gain', this.gainProcessor);
 
         // VAD local: informa quando o áudio capturado contém voz/som significativo.
         this.onSpeakingChange = null;
@@ -136,7 +148,7 @@ class AudioSender {
         return `ID ${deviceId}`;
     }
 
-    init({
+    async init({
         ssrc,
         udpSocket,
         voiceIp,
@@ -165,6 +177,10 @@ class AudioSender {
         this.sendVoice = sendVoice;
         this.deviceId = deviceId;
         this.gainPercent = Math.max(0, Math.min(2000, Number(gainPercent) || 100));
+        this.gainProcessor.setGain(this.gainPercent);
+
+        // RNNoise é inicializado antes do callback de captura começar.
+        await this.rnnoiseProcessor.init();
 
         const { OpusEncoder, OpusApplication } = audify;
         this.encoder = new OpusEncoder(
@@ -290,7 +306,6 @@ class AudioSender {
                 return;
             }
 
-            this._updateLocalVad(pcm);
             this._processAndSend(pcm);
         });
 
@@ -316,25 +331,34 @@ class AudioSender {
 
     setGain(percent = 100) {
         this.gainPercent = Math.max(0, Math.min(2000, Number(percent) || 0));
+        this.gainProcessor.setGain(this.gainPercent);
         this.log(`[Áudio-Sender] Ganho definido: ${this.gainPercent}%`);
     }
 
-    _applyGain(pcmBuffer) {
-        const gain = this.gainPercent / 100;
-        if (gain === 1) return pcmBuffer;
+    setNoiseSuppressionEnabled(enabled = true) {
+        this.rnnoiseProcessor.enabled = Boolean(enabled);
+        this.log(`[RNNoise] Supressão de ruído ${this.rnnoiseProcessor.enabled ? 'ativada' : 'desativada'}.`);
+        return this.rnnoiseProcessor.enabled;
+    }
 
-        // Cópia para não mutar o buffer original do callback
-        const out = Buffer.from(pcmBuffer);
-        const samples = new Int16Array(out.buffer, out.byteOffset, out.byteLength / 2);
+    isNoiseSuppressionEnabled() {
+        return Boolean(this.rnnoiseProcessor.enabled);
+    }
 
-        for (let i = 0; i < samples.length; i++) {
-            let v = samples[i] * gain;
-            if (v > 32767) v = 32767;
-            else if (v < -32768) v = -32768;
-            samples[i] = v | 0;
-        }
+    /**
+     * Extensibilidade: registra uma nova fonte PCM no fluxo de envio.
+     * A fonte deve implementar pullFrame(frameSize, channels) -> Buffer|null.
+     */
+    addAudioSource(name, source, processors = []) {
+        return this.audioPipeline.addSource(name, source, processors);
+    }
 
-        return out;
+    removeAudioSource(name) {
+        return this.audioPipeline.removeSource(name);
+    }
+
+    listAudioSources() {
+        return this.audioPipeline.listSources();
     }
 
     startSpeaking() {
@@ -400,8 +424,12 @@ class AudioSender {
 
     _processAndSend(pcmBuffer) {
         try {
-            const gained = this._applyGain(pcmBuffer);
-            const opusFrame = this.encoder.encode(gained, FRAME_SIZE);
+            // Todo o DSP acontece antes do Opus/DAVE/RTP.
+            // O VAD local também usa o áudio já limpo.
+            const processed = this.audioPipeline.processFrame(pcmBuffer);
+            this._updateLocalVad(processed);
+
+            const opusFrame = this.encoder.encode(processed, FRAME_SIZE);
             if (!opusFrame || opusFrame.length === 0) return;
 
             const mediaPayload = this._encryptDave(opusFrame);
@@ -463,6 +491,7 @@ class AudioSender {
 
         this.rtAudio = null;
         this.encoder = null;
+        this.audioPipeline.destroy();
         this.isInitialized = false;
         this.log('[Áudio-Sender] destruído');
     }
