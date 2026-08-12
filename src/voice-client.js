@@ -61,7 +61,10 @@ function createVoiceClient({
     channelId,
     onLog,
     onReady,
-    onDisconnected
+    onDisconnected,
+    onGatewayReady,
+    onGuildCreate,
+    onVoiceStateUpdate
 }) {
     const log = (msg) => {
         if (onLog) {
@@ -337,13 +340,31 @@ function createVoiceClient({
                     `[Gateway] logado como ${d.user.username}`
                 );
 
-                joinVoiceChannel();
+                // A interface pode usar o Gateway apenas para listar servidores
+                // antes de decidir em qual canal de voz entrar.
+                if (onGatewayReady) {
+                    onGatewayReady(d);
+                }
 
+                if (guildId && channelId) {
+                    joinVoiceChannel();
+                }
+
+                break;
+            }
+
+            case 'GUILD_CREATE': {
+                if (onGuildCreate) {
+                    onGuildCreate(d);
+                }
                 break;
             }
 
 
             case 'VOICE_STATE_UPDATE': {
+                if (onVoiceStateUpdate) {
+                    onVoiceStateUpdate(d);
+                }
                 /*
                  * Discord envia nosso próprio session_id
                  * através desse evento.
