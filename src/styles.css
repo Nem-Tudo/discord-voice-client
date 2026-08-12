@@ -7,6 +7,9 @@ body {
     width: 100%;
     height: 100%;
     margin: 0;
+    --sb-track-color: transparent;
+    --sb-thumb-color: #838383;
+    --sb-size: 4px;
 }
 
 body {
@@ -413,4 +416,18 @@ input:disabled {
     .log-section {
         flex-basis: 120px;
     }
+}
+
+::-webkit-scrollbar {
+    width: var(--sb-size);
+}
+
+::-webkit-scrollbar-track {
+    background: var(--sb-track-color);
+    border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--sb-thumb-color);
+    border-radius: 8px;
 }

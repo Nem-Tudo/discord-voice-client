@@ -435,7 +435,7 @@ window.discordVoice.onStatus((status) => {
     statusLabel.textContent = status || '';
     if (status === 'Desconectado') {
         loadButton.disabled = false;
-        loadButton.textContent = 'Carregar servidores';
+        loadButton.textContent = 'Logar';
         tokenInput.disabled = false;
     }
 });
