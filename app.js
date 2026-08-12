@@ -269,6 +269,7 @@ function showVoiceJoinError(guild, channel, message) {
         error: message,
 
         pending: null,
+        externallyDisconnected: false,
         client: null
     };
 
@@ -336,6 +337,7 @@ function startVoiceCall(guild, channel, {
         error: null,
 
         pending: null,
+        externallyDisconnected: false,
         client: null
     };
 
@@ -363,14 +365,20 @@ function startVoiceCall(guild, channel, {
                 const movedTo = state.channel_id ? String(state.channel_id) : null;
 
                 if (movedTo && movedTo !== entry.channelId) {
-                    const nextChannel =
-                        guild.channels?.[movedTo] ||
-                        { id: movedTo, name: `Canal ${movedTo}` };
+                    const previousChannelName = entry.channelName;
+                    // VOICE_STATE_UPDATE só traz o channel_id. O objeto `guild`
+                    // recebido quando a call foi criada pode estar defasado, então
+                    // nunca use o ID como nome permanente da call. A UI também
+                    // resolve o nome a partir do cache mais recente do Discord.
+                    const nextChannel = guild.channels?.[movedTo] || null;
+                    const nextChannelName = nextChannel?.name || entry.channelName || 'Canal de voz';
 
-                    log(`[Voice] Movido de ${entry.channelName} para ${nextChannel.name}. Reconectando...`);
+                    log(`[Voice] Discord moveu você de ${previousChannelName} para ${nextChannelName}. Reconectando...`);
 
+                    // Atualizamos a UI imediatamente, mas a reconexão é feita
+                    // pelo próprio voice-client usando o mesmo Gateway principal.
                     entry.channelId = movedTo;
-                    entry.channelName = nextChannel.name;
+                    entry.channelName = nextChannelName;
                     entry.status = 'connecting';
                     entry.error = null;
                     entry.pending = null;
@@ -380,13 +388,30 @@ function startVoiceCall(guild, channel, {
                         voiceClient.moveToChannel(movedTo);
                     }
 
-                    sendToRenderer('voice:status', `Você foi movido para ${nextChannel.name}. Reconectando...`);
-                } else if (!movedTo && entry.status !== 'error') {
-                    entry.status = 'error';
-                    entry.error = 'Você foi removido do canal de voz.';
+                    sendToRenderer('voice:status', `Você foi movido para ${nextChannelName}. Reconectando...`);
+                } else if (!movedTo) {
+                    // Remoção feita por outro usuário/admin. Não deixe o
+                    // voice-client vivo em estado "error": isso mantém
+                    // sockets/áudio antigos e causa o estado quebrado.
                     entry.pending = null;
+                    entry.externallyDisconnected = true;
+                    entry.status = 'disconnected';
+                    entry.error = null;
+
+                    log(`[Voice] Você foi desconectado de ${entry.channelName} externamente.`);
+
+                    if (voiceClients.get(guild.id) === entry) {
+                        voiceClients.delete(guild.id);
+                    }
+
                     publishActiveCalls();
-                    sendToRenderer('voice:status', 'Você foi removido do canal de voz.');
+                    sendToRenderer('voice:status', 'Você foi desconectado da call por outro usuário.');
+
+                    if (typeof voiceClient.forceDisconnect === 'function') {
+                        voiceClient.forceDisconnect('desconectado externamente');
+                    } else {
+                        voiceClient.disconnect();
+                    }
                 }
             }
         },
@@ -422,6 +447,18 @@ function startVoiceCall(guild, channel, {
         },
         onDisconnected: (reason) => {
             if (voiceClients.get(guild.id) !== entry) return;
+
+            // forceDisconnect() usado após um VOICE_STATE_UPDATE externo remove
+            // a entrada antes de chegar aqui. Este guard existe para qualquer
+            // corrida entre o evento do Discord e o fechamento dos sockets.
+            if (entry.externallyDisconnected) {
+                voiceClients.delete(guild.id);
+                entry.pending = null;
+                entry.status = 'disconnected';
+                entry.error = null;
+                publishActiveCalls();
+                return;
+            }
 
             const nextChannel = entry.pending;
 

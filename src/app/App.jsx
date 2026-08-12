@@ -738,7 +738,7 @@ function App() {
                     onSelect={setSelectedGuildId}
                 />
                 <ChannelsPanel guild={selectedGuild} currentUserId={currentUserId} activeCalls={activeCalls} speakingPriorityEnabled={speakingPriorityEnabled} />
-                <ActiveCallsPanel activeCalls={activeCalls} />
+                <ActiveCallsPanel activeCalls={activeCalls} guilds={guilds} />
             </section>
 
             {/* ===== CONTROLES INFERIORES: microfone ===== */}
@@ -1590,39 +1590,51 @@ function ActionToolbar({
     );
 }
 
-function ActiveCallsPanel({ activeCalls }) {
+function ActiveCallsPanel({ activeCalls, guilds }) {
     return (
         <aside className="panel active-panel">
             <h2>CALLS ATIVAS</h2>
             <div className="scroll-list">
                 {!activeCalls.calls.length ? <p className="empty">Nenhuma call ativa.</p> : null}
-                {activeCalls.calls.map((entry) => (
-                    <article key={entry.guildId} className="active-card">
-                        <div className="active-labels">
-                            <span className="active-title">
-                                {entry.switching ? `${entry.channelName}...` : entry.channelName}
-                            </span>
-                            <span className="active-meta">{entry.guildName}</span>
-                        </div>
-                        <IconButton
-                            icon={entry.muted ? micOffIcon : micOnIcon}
-                            title={entry.muted ? 'Reativar microfone' : 'Mutar microfone'}
-                            onClick={() => window.discordVoice.toggleCallMute(entry.guildId)}
-                        />
-                        <IconButton
-                            icon={entry.deafened ? deafenOnIcon : deafenOffIcon}
-                            title={entry.deafened ? 'Reativar áudio' : 'Ensurdecer'}
-                            onClick={() => window.discordVoice.toggleCallDeafen(entry.guildId)}
-                        />
-                        <button
-                            className="leave-button"
-                            type="button"
-                            onClick={() => window.discordVoice.leaveCall(entry.guildId)}
-                        >
-                            Sair
-                        </button>
-                    </article>
-                ))}
+                {activeCalls.calls.map((entry) => {
+                    // O backend recebe apenas channel_id no VOICE_STATE_UPDATE.
+                    // O nome verdadeiro deve ser resolvido pelo cache de guilds
+                    // mais recente do renderer, evitando mostrar o ID quando um
+                    // admin move o usuário para outro canal.
+                    const channelName =
+                        guilds?.[entry.guildId]?.channels?.[entry.channelId]?.name ||
+                        (entry.channelName && entry.channelName !== entry.channelId
+                            ? entry.channelName
+                            : 'Canal de voz');
+
+                    return (
+                        <article key={entry.guildId} className="active-card">
+                            <div className="active-labels">
+                                <span className="active-title">
+                                    {entry.switching ? `${channelName}...` : channelName}
+                                </span>
+                                <span className="active-meta">{entry.guildName}</span>
+                            </div>
+                            <IconButton
+                                icon={entry.muted ? micOffIcon : micOnIcon}
+                                title={entry.muted ? 'Reativar microfone' : 'Mutar microfone'}
+                                onClick={() => window.discordVoice.toggleCallMute(entry.guildId)}
+                            />
+                            <IconButton
+                                icon={entry.deafened ? deafenOnIcon : deafenOffIcon}
+                                title={entry.deafened ? 'Reativar áudio' : 'Ensurdecer'}
+                                onClick={() => window.discordVoice.toggleCallDeafen(entry.guildId)}
+                            />
+                            <button
+                                className="leave-button"
+                                type="button"
+                                onClick={() => window.discordVoice.leaveCall(entry.guildId)}
+                            >
+                                Sair
+                            </button>
+                        </article>
+                    )
+                })}
             </div>
         </aside>
     );

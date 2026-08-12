@@ -405,21 +405,27 @@ function createVoiceClient({
 
             case 'VOICE_STATE_UPDATE': {
 
-                if (
+                const isOwnVoiceState =
                     guildId &&
-                    channelId &&
                     String(d.guild_id) === String(guildId) &&
-                    d.user_id === botUserId
-                ) {
+                    d.user_id === botUserId;
+
+                if (isOwnVoiceState) {
                     /*
-                     * Discord enviou nosso estado de voz.
-                     *
-                     * Se o channel_id não é o canal solicitado,
-                     * nossa entrada foi rejeitada.
+                     * channel_id = null é ambíguo: pode ser uma entrada recusada
+                     * ou um admin desconectando quem já estava na call.
+                     * Entregamos primeiro ao app para que a desconexão externa
+                     * seja tratada como saída normal, nunca como erro.
                      */
+                    const wasSessionEstablished = sessionEstablished;
+
+                    if (onVoiceStateUpdate) {
+                        onVoiceStateUpdate(d);
+                    }
+
                     if (
                         !d.channel_id &&
-                        !sessionEstablished &&
+                        !wasSessionEstablished &&
                         !intentionalDisconnect &&
                         !joinFailureReported
                     ) {
@@ -437,28 +443,18 @@ function createVoiceClient({
 
                     if (d.channel_id === channelId) {
                         voiceSessionId = d.session_id;
-
                         maybeConnectVoice();
                     }
+
+                    /*
+                     * Não deixe o bloco genérico abaixo processar novamente o
+                     * mesmo evento do próprio usuário.
+                     */
+                    break;
                 }
 
                 if (onVoiceStateUpdate) {
                     onVoiceStateUpdate(d);
-                }
-
-                /*
-                 * Discord envia nosso próprio session_id
-                 * através desse evento.
-                 */
-                if (
-                    guildId &&
-                    channelId &&
-                    String(d.guild_id) === String(guildId) &&
-                    d.user_id === botUserId
-                ) {
-                    voiceSessionId = d.session_id;
-
-                    maybeConnectVoice();
                 }
 
                 /*
@@ -1826,6 +1822,36 @@ function createVoiceClient({
     }
 
     // ============================================================
+    // DESCONEXÃO EXTERNA
+    // ============================================================
+    // O Discord já removeu/moveu o usuário. Não envie outro OP 4;
+    // apenas destrua os transportes locais e finalize o cliente.
+    function forceDisconnect(reason = 'desconectado externamente') {
+        intentionalDisconnect = true;
+
+        clearTimeout(joinTimeout);
+        joinTimeout = null;
+
+        clearTimeout(gatewayReconnectTimer);
+        gatewayReconnectTimer = null;
+
+        if (voiceWs) {
+            try { voiceWs.removeAllListeners(); } catch (_) {}
+            try { voiceWs.close(); } catch (_) {}
+            voiceWs = null;
+        }
+
+        if (gatewayWs) {
+            try { gatewayWs.removeAllListeners(); } catch (_) {}
+            try { gatewayWs.close(); } catch (_) {}
+            gatewayWs = null;
+        }
+
+        finishDisconnect(reason);
+    }
+
+
+    // ============================================================
     // DISCONNECT
     // ============================================================
 
@@ -1953,6 +1979,10 @@ function createVoiceClient({
 
         moveToChannel(nextChannelId) {
             return moveToChannel(nextChannelId);
+        },
+
+        forceDisconnect(reason) {
+            return forceDisconnect(reason);
         },
 
         getUserId() {
