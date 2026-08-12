@@ -12,75 +12,11 @@ try {
     // Erros de importação são tratados em init()
 }
 
-/*
- * Discord voice:
- *
- * 48000 Hz
- * 2 canais
- * 20 ms por frame
- *
- * 48000 * 0.020 = 960 samples/channel
- */
-const SAMPLE_RATE = 48000;
-const CHANNELS = 2;
-const FRAME_SAMPLES = 960; // por canal
-const FRAME_BYTES = FRAME_SAMPLES * CHANNELS * 2; // int16 = 2 bytes
-/*
- * Janela de mixagem orientada a EVENTO (não a um relógio próprio).
- *
- * Quando o primeiro frame decodificado de um "ciclo" chega, abrimos
- * uma janela curtíssima (poucos ms) para dar tempo de outros
- * usuários que estejam falando ao mesmo tempo entregarem o frame
- * deles também, e então escrevemos UM frame combinado.
- *
- * Isso é diferente de um setInterval: não existe um "relógio" de
- * fundo rodando independente da chegada real dos pacotes. Sem
- * isso, o timer podia dessincronizar do ritmo real de chegada dos
- * pacotes RTP (drift do event loop do Node) e causar faltas de
- * dados (underrun) na saída de áudio — o que soa robótico mesmo
- * com um único usuário falando.
- */
-const MIX_WINDOW_MS = 3;
-
-/*
- * Tamanho máximo de um frame Opus válido (RFC 6716): 1275 bytes.
- *
- * Um "frame" maior que isso não é Opus válido — decodificá-lo
- * pode derrubar o decoder (abort interno do WASM), então
- * descartamos antes de chegar perto do decoder.
- */
-const MAX_OPUS_FRAME_BYTES = 1275;
-
-/*
- * Quantos frames extras por usuário podem ficar em espera para a
- * PRÓXIMA janela de mixagem, caso dois frames do mesmo usuário
- * cheguem antes da janela atual fechar.
- */
-const MAX_QUEUE_FRAMES = 3;
-
 class AudioPlayer {
     constructor(onLog) {
         this.log = onLog || console.log;
 
-        // Antes: um único decoder para TODOS os usuários.
-        // Isso corrompia o estado interno do Opus quando
-        // pacotes de SSRCs diferentes chegavam intercalados
-        // (ex.: duas pessoas falando ao mesmo tempo), gerando
-        // áudio robótico/metálico.
-        //
-        // Agora: um decoder por SSRC, criado sob demanda.
-        this.opusDecoders = new Map(); // ssrc -> OpusScript
-
-        // Fila de frames PCM que chegaram enquanto uma janela de
-        // mixagem já estava em andamento para aquele SSRC (ou seja,
-        // o "próximo" frame daquele usuário, que entra na próxima
-        // janela).
-        this.userQueues = new Map(); // ssrc -> Buffer[]
-
-        // Janela de mixagem atual em andamento (ou null se nenhuma).
-        // { buffer, contributors: Set<ssrc>, timer }
-        this.pendingMix = null;
-
+        this.opusDecoder = null;
         this.rtAudio = null;
         this.isInitialized = false;
 
@@ -103,18 +39,33 @@ class AudioPlayer {
         }
 
         try {
+            /*
+             * Discord voice:
+             *
+             * 48000 Hz
+             * 2 canais
+             * 20 ms por frame
+             *
+             * 48000 * 0.020 = 960 samples/channel
+             */
+            this.opusDecoder = new OpusScript(
+                48000,
+                2,
+                OpusScript.Application.AUDIO
+            );
+
             this.rtAudio = new audify.RtAudio();
 
             this.rtAudio.openStream(
                 {
                     deviceId: this.rtAudio.getDefaultOutputDevice(),
-                    nChannels: CHANNELS,
+                    nChannels: 2,
                     firstChannel: 0
                 },
                 null,
                 audify.RtAudioFormat.RTAUDIO_SINT16,
-                SAMPLE_RATE,
-                FRAME_SAMPLES,
+                48000,
+                960,
                 'DiscordBot'
             );
 
@@ -133,178 +84,6 @@ class AudioPlayer {
             );
 
             return false;
-        }
-    }
-
-    /**
-     * Retorna (criando se necessário) o decoder Opus dedicado
-     * a um SSRC específico.
-     *
-     * Cada usuário tem seu próprio encoder Opus do lado dele,
-     * então cada um precisa de seu próprio decoder deste lado
-     * para preservar o estado de predição/continuidade entre
-     * frames consecutivos daquele mesmo usuário.
-     */
-    _getDecoderForSsrc(ssrc) {
-        let decoder = this.opusDecoders.get(ssrc);
-
-        if (!decoder) {
-            decoder = new OpusScript(
-                SAMPLE_RATE,
-                CHANNELS,
-                OpusScript.Application.AUDIO
-            );
-
-            this.opusDecoders.set(ssrc, decoder);
-        }
-
-        return decoder;
-    }
-
-    /**
-     * Remove o decoder e a fila associados a um SSRC.
-     *
-     * Deve ser chamado quando um usuário sai do canal de voz
-     * (ex.: CLIENT_DISCONNECT), para não vazar decoders/memória
-     * e para não deixar frames "fantasmas" na fila do mixer.
-     */
-    releaseSsrc(ssrc) {
-        const decoder = this.opusDecoders.get(ssrc);
-
-        if (decoder) {
-            try {
-                decoder.delete();
-            } catch (e) {
-                // Ignorado
-            }
-
-            this.opusDecoders.delete(ssrc);
-        }
-
-        this.userQueues.delete(ssrc);
-    }
-
-    /**
-     * Soma (mixa) `src` dentro de `dst`, amostra a amostra, com
-     * clipping em int16. Só mixa se os tamanhos baterem com o
-     * frame esperado (960 samples/canal, 2 canais) — caso
-     * contrário ignora com segurança em vez de corromper o buffer.
-     */
-    _sumInto(dst, src) {
-        if (
-            !src ||
-            src.length !== FRAME_BYTES ||
-            dst.length !== FRAME_BYTES
-        ) {
-            return;
-        }
-
-        for (let i = 0; i < FRAME_BYTES; i += 2) {
-            const a = dst.readInt16LE(i);
-            const b = src.readInt16LE(i);
-
-            let sum = a + b;
-
-            if (sum > 32767) {
-                sum = 32767;
-            } else if (sum < -32768) {
-                sum = -32768;
-            }
-
-            dst.writeInt16LE(sum, i);
-        }
-    }
-
-    /**
-     * Entrega um frame PCM recém-decodificado de um SSRC para a
-     * mixagem.
-     *
-     * Não existe um "relógio" de fundo aqui: a primeira chamada
-     * depois que a janela anterior fechou abre uma nova janela
-     * curtíssima (MIX_WINDOW_MS) e agenda o flush dela. Qualquer
-     * outro usuário que decodificar um frame ENQUANTO essa janela
-     * está aberta é somado ao mesmo buffer. Isso segue o ritmo
-     * real de chegada dos pacotes em vez de brigar com ele.
-     */
-    _queueFrameForMix(ssrc, frame) {
-        if (frame.length !== FRAME_BYTES) {
-            // Frame de tamanho inesperado (ex.: FEC/DTX). Ignora
-            // com segurança em vez de corromper a mixagem.
-            return;
-        }
-
-        if (!this.pendingMix) {
-            this.pendingMix = {
-                buffer: Buffer.from(frame),
-                contributors: new Set([ssrc]),
-                timer: setTimeout(
-                    () => this._flushMix(),
-                    MIX_WINDOW_MS
-                )
-            };
-
-            return;
-        }
-
-        if (this.pendingMix.contributors.has(ssrc)) {
-            // Este usuário já contribuiu para a janela atual;
-            // este frame é o PRÓXIMO dele, guarda para depois
-            // do flush em vez de perder ou misturar na janela errada.
-            let queue = this.userQueues.get(ssrc);
-
-            if (!queue) {
-                queue = [];
-                this.userQueues.set(ssrc, queue);
-            }
-
-            queue.push(frame);
-
-            while (queue.length > MAX_QUEUE_FRAMES) {
-                queue.shift();
-            }
-
-            return;
-        }
-
-        this._sumInto(this.pendingMix.buffer, frame);
-        this.pendingMix.contributors.add(ssrc);
-    }
-
-    /**
-     * Fecha a janela de mixagem atual, escreve o frame combinado
-     * na saída de áudio, e imediatamente abre a próxima janela
-     * caso já existam frames de usuários esperando (evita perder
-     * cadência quando duas pessoas falam continuamente).
-     */
-    _flushMix() {
-        const mix = this.pendingMix;
-
-        this.pendingMix = null;
-
-        if (!mix) {
-            return;
-        }
-
-        if (this.rtAudio) {
-            try {
-                this.rtAudio.write(mix.buffer);
-            } catch (e) {
-                if (!this.debugFlags.speakerError) {
-                    this.log(
-                        `[Áudio-Debug] (4/4) ERRO HARDWARE: ${e.message}`
-                    );
-
-                    this.debugFlags.speakerError = true;
-                }
-            }
-        }
-
-        for (const [ssrc, queue] of this.userQueues) {
-            if (queue.length > 0) {
-                const next = queue.shift();
-
-                this._queueFrameForMix(ssrc, next);
-            }
         }
     }
 
@@ -557,11 +336,11 @@ class AudioPlayer {
      *  ↓
      * DAVE
      *  ↓
-     * Opus (decoder por SSRC)
+     * Opus
      *  ↓
-     * PCM -> fila do usuário
+     * PCM
      *  ↓
-     * mixer (a cada 20ms) -> speaker
+     * speaker
      */
     processPacket(
         msg,
@@ -798,44 +577,11 @@ class AudioPlayer {
              * ======================================================
              * 5. OPUS -> PCM
              * ======================================================
-             *
-             * Usa o decoder DEDICADO deste SSRC, não um decoder
-             * global compartilhado entre todos os usuários. Isso
-             * é o que evita o áudio robótico quando duas ou mais
-             * pessoas falam ao mesmo tempo.
              */
-
-            /*
-             * Um frame Opus válido tem no máximo 1275 bytes
-             * (RFC 6716). Se o DAVE devolveu algo maior — por
-             * exemplo, dado corrompido durante uma transição de
-             * chave em andamento — não passamos isso pro decoder:
-             * o decoder Opus (WASM) pode sofrer um abort interno
-             * IRREVERSÍVEL ao receber dado malformado, o que trava
-             * o processo inteiro, não só aquele pacote.
-             */
-            if (
-                opusFrame.length === 0 ||
-                opusFrame.length > MAX_OPUS_FRAME_BYTES
-            ) {
-                if (!this.debugFlags.decodeError) {
-                    this.log(
-                        `[Áudio-Debug] (3/4) Frame Opus com tamanho ` +
-                        `inválido (${opusFrame.length} bytes), descartado.`
-                    );
-
-                    this.debugFlags.decodeError = true;
-                }
-
-                return;
-            }
-
             let pcmData;
 
             try {
-                const decoder = this._getDecoderForSsrc(ssrc);
-
-                pcmData = decoder.decode(opusFrame);
+                pcmData = this.opusDecoder.decode(opusFrame);
 
                 if (!pcmData || pcmData.length === 0) {
                     if (!this.debugFlags.decodeError) {
@@ -857,25 +603,25 @@ class AudioPlayer {
                     this.debugFlags.decodeError = true;
                 }
 
-                /*
-                 * A instância do decoder pode ter ficado num estado
-                 * inconsistente/corrompido internamente após esse
-                 * erro (comum em bindings WASM após um abort).
-                 * Descartamos e deixamos uma nova ser criada no
-                 * próximo pacote deste SSRC, em vez de continuar
-                 * usando um decoder potencialmente quebrado.
-                 */
-                this.releaseSsrc(ssrc);
-
                 return;
             }
 
             /*
              * ======================================================
-             * 6. PCM -> MIXAGEM (orientada a evento) -> SPEAKER
+             * 6. PCM -> SPEAKER
              * ======================================================
              */
-            this._queueFrameForMix(ssrc, pcmData);
+            try {
+                this.rtAudio.write(pcmData);
+            } catch (e) {
+                if (!this.debugFlags.speakerError) {
+                    this.log(
+                        `[Áudio-Debug] (4/4) ERRO HARDWARE: ${e.message}`
+                    );
+
+                    this.debugFlags.speakerError = true;
+                }
+            }
 
         } catch (err) {
             this.log(
@@ -885,21 +631,15 @@ class AudioPlayer {
     }
 
     destroy() {
-        if (this.pendingMix) {
-            clearTimeout(this.pendingMix.timer);
-            this.pendingMix = null;
-        }
-
-        for (const decoder of this.opusDecoders.values()) {
+        if (this.opusDecoder) {
             try {
-                decoder.delete();
+                this.opusDecoder.delete();
             } catch (e) {
                 // Ignorado
             }
-        }
 
-        this.opusDecoders.clear();
-        this.userQueues.clear();
+            this.opusDecoder = null;
+        }
 
         if (this.rtAudio) {
             try {
