@@ -1,18 +1,23 @@
 {
-  "name": "discord-call-js",
+  "name": "discord-voice-pro",
   "version": "1.0.0",
-  "description": "",
+  "description": "Discord Voice Pro",
   "main": "app.js",
-  "scripts": {
-    "build": "vite build",
-    "dev": "vite",
-    "electron": "electron .",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "npm run build && electron ."
-  },
-  "keywords": [],
   "author": "",
   "license": "ISC",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "electron": "electron .",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "keywords": [],
   "dependencies": {
     "@snazzah/davey": "^0.1.12",
     "audify": "^1.10.1",
@@ -23,8 +28,59 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.5",
     "electron": "^37.2.6",
+    "electron-builder": "^26.15.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "vite": "^8.2.1"
+  },
+  "build": {
+    "appId": "com.discordcalljs.app",
+    "productName": "Discord Call JS",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "app.js",
+      "package.json",
+      "!node_modules/**/*.{md,ts,map}",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.social-networking"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icons",
+      "category": "Network"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }
