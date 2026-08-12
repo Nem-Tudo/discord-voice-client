@@ -707,7 +707,7 @@ input:disabled {
     min-width: 0;
 }
 
-.voice-category + .voice-category {
+.voice-category+.voice-category {
     margin-top: 12px;
 }
 
@@ -782,8 +782,7 @@ input:disabled {
     color: #dbdee1;
 }
 
-.discord-voice-channel.active
-    .discord-voice-channel-row {
+.discord-voice-channel.active .discord-voice-channel-row {
     color: #f2f3f5;
 }
 
@@ -794,13 +793,11 @@ input:disabled {
     color: #949ba4;
 }
 
-.discord-voice-channel-row:hover
-    .voice-channel-icon {
+.discord-voice-channel-row:hover .voice-channel-icon {
     color: #b5bac1;
 }
 
-.discord-voice-channel.active
-    .voice-channel-icon {
+.discord-voice-channel.active .voice-channel-icon {
     color: #23a55a;
 }
 
@@ -841,8 +838,7 @@ input:disabled {
     font-variant-numeric: tabular-nums;
 }
 
-.discord-voice-channel-row:hover
-    .voice-channel-limit {
+.discord-voice-channel-row:hover .voice-channel-limit {
     background: #404249;
     color: #b5bac1;
 }
@@ -991,6 +987,78 @@ input:disabled {
 
 .voice-category-header.collapsed .category-chevron {
     transform: rotate(0deg);
+}
+
+.voice-connection-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+
+    flex: 0 0 auto;
+
+    font-size: 10px;
+    font-weight: 600;
+
+    white-space: nowrap;
+}
+
+.voice-status-dot {
+    width: 7px;
+    height: 7px;
+
+    flex: 0 0 7px;
+
+    border-radius: 50%;
+}
+
+.voice-connection-status.connecting {
+    color: #f0b232;
+}
+
+.voice-connection-status.connecting .voice-status-dot {
+    background: #f0b232;
+
+    animation: voice-connecting-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-connection-status.connected {
+    color: #23a55a;
+}
+
+.voice-connection-status.connected .voice-status-dot {
+    background: #23a55a;
+}
+
+.voice-connection-status.error {
+    color: #f23f42;
+}
+
+.voice-connection-status.error .voice-status-dot {
+    background: #f23f42;
+}
+
+.discord-voice-channel.connecting .voice-channel-icon {
+    color: #f0b232;
+}
+
+.discord-voice-channel.active .voice-channel-icon {
+    color: #23a55a;
+}
+
+.discord-voice-channel.error .voice-channel-icon {
+    color: #f23f42;
+}
+
+@keyframes voice-connecting-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.35;
+    }
 }
 
 /* ===== RESPONSIVO ===== */

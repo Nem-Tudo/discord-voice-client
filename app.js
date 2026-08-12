@@ -40,6 +40,7 @@ function activeCallsPayload() {
     return {
         allMuted,
         allDeafened,
+
         calls: Array.from(voiceClients.values()).map((entry) => ({
             guildId: entry.guildId,
             guildName: entry.guildName,
@@ -47,6 +48,10 @@ function activeCallsPayload() {
             channelName: entry.channelName,
             muted: entry.muted,
             deafened: entry.deafened,
+
+            status: entry.status,
+            error: entry.error,
+
             switching: Boolean(entry.pending)
         }))
     };
@@ -227,6 +232,11 @@ function startVoiceCall(guild, channel) {
         channelName: channel.name,
         muted: allMuted,
         deafened: allDeafened,
+
+        // connecting | connected | error
+        status: 'connecting',
+        error: null,
+
         pending: null,
         client: null
     };
@@ -239,6 +249,9 @@ function startVoiceCall(guild, channel) {
         gainPercent: selectedMicGain,
         onLog: log,
         onReady: () => {
+            entry.status = 'connected';
+            entry.error = null;
+
             log(`Conectado em ${channel.name} (${guild.name}).`);
 
             applyMicToClient(voiceClient);
@@ -246,24 +259,79 @@ function startVoiceCall(guild, channel) {
             applySpeakingState(entry);
 
             publishActiveCalls();
+
+            sendToRenderer('voice:status', `Conectado em ${channel.name}.`);
         },
         onDisconnected: (reason) => {
             if (voiceClients.get(guild.id) !== entry) return;
 
             const nextChannel = entry.pending;
-            voiceClients.delete(guild.id);
+
+            // Troca de canal: não é erro.
+            if (nextChannel) {
+                entry.pending = null;
+
+                voiceClients.delete(guild.id);
+                publishActiveCalls();
+
+                startVoiceCall(guild, nextChannel);
+                return;
+            }
+
+            // Se nunca chegou a ficar conectado, foi uma falha de conexão.
+            if (entry.status === 'connecting') {
+                entry.status = 'error';
+                entry.error = reason || 'Falha desconhecida';
+
+                publishActiveCalls();
+
+                log(
+                    `[Voice] Erro ao conectar em ${channel.name}: ${reason || 'falha desconhecida'}`
+                );
+
+                sendToRenderer(
+                    'voice:status',
+                    `Erro ao conectar em ${channel.name}.`
+                );
+
+                // Deixa o erro visível por alguns segundos.
+                setTimeout(() => {
+                    if (voiceClients.get(guild.id) === entry) {
+                        voiceClients.delete(guild.id);
+                        publishActiveCalls();
+                    }
+                }, 4000);
+
+                return;
+            }
+
+            // Já estava conectado e perdeu a conexão.
+            entry.status = 'error';
+            entry.error = reason || 'Conexão perdida';
+
             publishActiveCalls();
 
-            if (nextChannel) {
-                startVoiceCall(guild, nextChannel);
-            } else {
-                log(`[Voice] call removida (${reason}).`);
-                sendToRenderer('voice:status', `Saiu da call de ${guild.name}.`);
-            }
-        }
+            log(
+                `[Voice] Conexão perdida em ${channel.name}: ${reason || 'motivo desconhecido'}`
+            );
+
+            sendToRenderer(
+                'voice:status',
+                `Erro: conexão com ${channel.name} foi perdida.`
+            );
+
+            setTimeout(() => {
+                if (voiceClients.get(guild.id) === entry) {
+                    voiceClients.delete(guild.id);
+                    publishActiveCalls();
+                }
+            }, 4000);
+        },
     });
 
     entry.client = voiceClient;
+    entry.status = 'connecting';
+    
     voiceClients.set(guild.id, entry);
     publishActiveCalls();
 
@@ -372,7 +440,10 @@ ipcMain.handle('voice:join-call', async (_event, { guild, channel }) => {
 
     entry.pending = channel;
     entry.client.disconnect();
-    sendToRenderer('voice:status', `Trocando para ${channel.name}...`);
+    sendToRenderer(
+        'voice:status',
+        `Conectando em ${channel.name}...`
+    );
     publishActiveCalls();
 });
 

@@ -835,6 +835,10 @@ function ChannelCard({ guild, channel, activeCalls }) {
         channel.id
     );
 
+    const connecting = active?.status === 'connecting';
+    const connected = active?.status === 'connected';
+    const error = active?.status === 'error';
+
     const members = Object.values(guild.voiceStates)
         .filter((state) => state.channel_id === channel.id)
         .sort((a, b) => {
@@ -860,6 +864,8 @@ function ChannelCard({ guild, channel, activeCalls }) {
         Number(channel.user_limit || 0) > 0;
 
     const joinCall = () => {
+        if (connecting) return;
+
         window.discordVoice.joinCall({
             guild: {
                 id: guild.id,
@@ -873,7 +879,14 @@ function ChannelCard({ guild, channel, activeCalls }) {
     };
 
     return (
-        <div className={`discord-voice-channel${active ? ' active' : ''}`}>
+        <div
+            className={[
+                'discord-voice-channel',
+                connected ? 'active' : '',
+                connecting ? 'connecting' : '',
+                error ? 'error' : ''
+            ].filter(Boolean).join(' ')}
+        >
             <div
                 className="discord-voice-channel-row"
                 role="button"
@@ -894,17 +907,30 @@ function ChannelCard({ guild, channel, activeCalls }) {
                         <span className="voice-channel-count">
                             {String(members.length).padStart(2, '0')}
                         </span>
+
                         <span className="voice-channel-limit-separator">
                             /
                         </span>
+
                         <span>
                             {String(channel.user_limit).padStart(2, '0')}
                         </span>
                     </span>
                 ) : null}
 
-                {active ? (
-                    <span className="voice-connected-dot" />
+                {connecting ? (
+                    <span className="voice-connection-status connecting">
+                        <span className="voice-status-dot" />
+                        Conectando...
+                    </span>
+                ) : error ? (
+                    <span
+                        className="voice-connection-status error"
+                        title={active.error || 'Erro desconhecido'}
+                    >
+                        <span className="voice-status-dot" />
+                        Erro ao conectar
+                    </span>
                 ) : null}
             </div>
 
