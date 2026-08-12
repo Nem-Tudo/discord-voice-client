@@ -387,6 +387,7 @@ function createVoiceClient({
                 if (
                     guildId &&
                     channelId &&
+                    String(d.guild_id) === String(guildId) &&
                     d.user_id === botUserId
                 ) {
                     /*
@@ -428,7 +429,12 @@ function createVoiceClient({
                  * Discord envia nosso próprio session_id
                  * através desse evento.
                  */
-                if (guildId && channelId && d.user_id === botUserId) {
+                if (
+                    guildId &&
+                    channelId &&
+                    String(d.guild_id) === String(guildId) &&
+                    d.user_id === botUserId
+                ) {
                     voiceSessionId = d.session_id;
 
                     maybeConnectVoice();
@@ -447,6 +453,13 @@ function createVoiceClient({
 
             case 'VOICE_SERVER_UPDATE': {
                 if (!guildId || !channelId) {
+                    break;
+                }
+
+                // O VOICE_SERVER_UPDATE também pertence a uma guild.
+                // Ignorar eventos de outras guilds é necessário para
+                // manter múltiplas calls simultaneamente.
+                if (String(d.guild_id) !== String(guildId)) {
                     break;
                 }
 

@@ -341,6 +341,11 @@ function startVoiceCall(guild, channel, {
         onVoiceStateUpdate: (state) => {
             if (voiceClients.get(guild.id) !== entry) return;
 
+            // Cada cliente de voz é associado a uma guild específica.
+            // Não processe eventos VOICE_STATE_UPDATE de outras guilds,
+            // mesmo que o user_id seja o mesmo.
+            if (String(state.guild_id) !== String(guild.id)) return;
+
             const ownUserId =
                 typeof voiceClient.getUserId === 'function'
                     ? voiceClient.getUserId()
