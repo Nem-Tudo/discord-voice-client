@@ -1232,9 +1232,17 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
         hasLimit &&
         members.length >= Number(channel.user_limit);
 
-    const joinCall = () => {
+    const joinCall = async () => {
         if (active?.status === 'connecting') {
             return;
+        }
+
+        const activeSameGuild = activeCalls.calls.find(
+            (entry) => entry.guildId === guild.id
+        );
+
+        if (activeSameGuild && activeSameGuild.channelId !== channel.id) {
+            await window.discordVoice.leaveCall(guild.id);
         }
 
         window.discordVoice.joinCall({
@@ -1242,13 +1250,11 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
                 id: guild.id,
                 name: guild.name
             },
-
             channel: {
                 id: channel.id,
                 name: channel.name,
                 userLimit: Number(channel.user_limit || 0)
             },
-
             canConnect: permissions.connect,
             isFull
         });
