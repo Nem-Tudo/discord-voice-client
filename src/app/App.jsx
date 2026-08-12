@@ -22,10 +22,10 @@ function Avatar({ className, text, url }) {
     );
 }
 
-function IconButton({ icon, title, onClick }) {
+function IconButton({ icon, title, onClick, className = '' }) {
     return (
         <button
-            className="icon-button"
+            className={`icon-button ${className}`.trim()}
             type="button"
             title={title}
             aria-label={title}
@@ -43,8 +43,10 @@ function serverIconUrl(guild) {
     return guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png?size=64` : null;
 }
 
-function userAvatarUrl(user) {
-    return user?.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64` : null;
+function userAvatarUrl(user, size = 64) {
+    return user?.avatar
+        ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=${size}`
+        : null;
 }
 
 function permissionBits(value) {
@@ -173,6 +175,14 @@ function activateWithKeyboard(event, callback) {
     callback();
 }
 
+function normalizeSearch(text) {
+    return String(text || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+}
+
 function App() {
     const [token, setToken] = useState('');
     const [status, setStatus] = useState('Informe o token para carregar seus servidores.');
@@ -180,11 +190,11 @@ function App() {
     const [guilds, setGuilds] = useState({});
     const [selectedGuildId, setSelectedGuildId] = useState(null);
     const [currentUserId, setCurrentUserId] = useState(null);
+    const [currentUser, setCurrentUser] = useState(null);
     const [activeCalls, setActiveCalls] = useState(emptyActiveCalls);
     const [logs, setLogs] = useState([]);
     const logAreaRef = useRef(null);
 
-    // ===== MICROFONE =====
     const [mics, setMics] = useState([]);
     const [selectedMicId, setSelectedMicId] = useState(() => {
         const saved = localStorage.getItem('selectedMicId');
@@ -194,7 +204,6 @@ function App() {
     });
     const [testingMic, setTestingMic] = useState(false);
 
-    // Ganho: 0–2000% (100 = normal)
     const [micGain, setMicGain] = useState(() => {
         const saved = localStorage.getItem('micGain');
         if (saved === null || saved === '') return 100;
@@ -208,6 +217,9 @@ function App() {
         [guilds]
     );
     const selectedGuild = selectedGuildId ? guilds[selectedGuildId] : null;
+
+    const displayName =
+        currentUser?.global_name || currentUser?.username || (currentUserId ? 'Usuário' : null);
 
     const refreshMics = async () => {
         try {
@@ -231,7 +243,6 @@ function App() {
 
     useEffect(() => {
         refreshMics();
-        // aplica ganho salvo ao carregar
         window.discordVoice.setMicGain?.(micGain);
     }, []);
 
@@ -274,10 +285,12 @@ function App() {
                 setGuilds({});
                 setSelectedGuildId(null);
                 setCurrentUserId(null);
+                setCurrentUser(null);
                 setActiveCalls(emptyActiveCalls);
             }),
             api.onGatewayReady((ready) => {
                 setCurrentUserId(ready.user?.id || null);
+                setCurrentUser(ready.user || null);
                 setGuilds((previous) => {
                     let next = previous;
                     for (const guild of ready.guilds || []) next = normalizeGuilds(next, guild);
@@ -319,7 +332,11 @@ function App() {
             api.onActiveCalls((payload) => setActiveCalls(payload || emptyActiveCalls)),
             api.onStatus((nextStatus) => {
                 setStatus(nextStatus || '');
-                if (nextStatus === 'Desconectado') setLoading(false);
+                if (nextStatus === 'Desconectado') {
+                    setLoading(false);
+                    setCurrentUser(null);
+                    setCurrentUserId(null);
+                }
             }),
             api.onLog((line) => setLogs((previous) => [...previous, line]))
         ];
@@ -349,23 +366,65 @@ function App() {
 
     return (
         <main className="app-shell">
-            <form className="token-bar" onSubmit={loadServers}>
-                <label className="field">
-                    <span>TOKEN</span>
-                    <input
-                        type="password"
-                        placeholder="Token do Discord"
-                        autoComplete="off"
-                        value={token}
-                        disabled={loading}
-                        onChange={(event) => setToken(event.target.value)}
+            {/* ===== TOPO: usuário logado ===== */}
+            {currentUser ? (
+                <header className="user-bar">
+                    <Avatar
+                        className="user-bar-avatar"
+                        text={displayName}
+                        url={userAvatarUrl(currentUser, 128)}
                     />
-                </label>
+                    <div className="user-bar-text">
+                        <span className="user-bar-label">Logado como</span>
+                        <span className="user-bar-name">
+                            {displayName}
+                            {currentUser.discriminator && currentUser.discriminator !== '0'
+                                ? `#${currentUser.discriminator}`
+                                : ''}
+                        </span>
+                    </div>
+                    {activeCalls.calls.length > 0 ? (
+                        <span className="user-bar-calls">
+                            {activeCalls.calls.length} call{activeCalls.calls.length > 1 ? 's' : ''} ativa
+                            {activeCalls.calls.length > 1 ? 's' : ''}
+                        </span>
+                    ) : null}
+                    <button className="inline-leave"
+                        onClick={() => {
+                            window.discordVoice.disconnect?.();
+                            setToken('');
+                            setCurrentUser(null);
+                            setCurrentUserId(null);
+                            setGuilds({});
+                            setSelectedGuildId(null);
+                            setActiveCalls({ allMuted: false, allDeafened: false, calls: [] });
+                            setStatus('Desconectado');
+                            setLoading(false);
+                        }}>
+                        Logout
+                    </button>
+                </header>
+            ) : null}
 
-                <button className="primary-button" type="submit" disabled={loading}>
-                    {loading ? 'Carregando...' : sortedGuilds.length ? 'Atualizar servidores' : 'Logar'}
-                </button>
-            </form>
+            {
+                !currentUser && <form className="token-bar" onSubmit={loadServers}>
+                    <label className="field">
+                        <span>TOKEN</span>
+                        <input
+                            type="password"
+                            placeholder="Token do Discord"
+                            autoComplete="off"
+                            value={token}
+                            disabled={loading}
+                            onChange={(event) => setToken(event.target.value)}
+                        />
+                    </label>
+
+                    <button className="primary-button" type="submit" disabled={loading}>
+                        {loading ? 'Carregando...' : sortedGuilds.length ? 'Atualizar servidores' : 'Logar'}
+                    </button>
+                </form>
+            }
 
             <p className="status">{status}</p>
 
@@ -380,85 +439,110 @@ function App() {
                 <ActiveCallsPanel activeCalls={activeCalls} />
             </section>
 
-            {/* ===== SEÇÃO DE MICROFONE ===== */}
-            <section className="mic-section" aria-labelledby="micTitle">
-                <h2 id="micTitle">MICROFONE</h2>
-                <div className="mic-area">
-                    <select
-                        className="mic-select"
-                        value={selectedMicId ?? ''}
-                        onChange={handleMicChange}
-                        disabled={!mics.length}
-                    >
-                        {!mics.length ? (
-                            <option value="">Carregando microfones...</option>
-                        ) : (
-                            <>
-                                <option value="">Padrão do sistema</option>
-                                {mics.map((mic) => (
-                                    <option key={mic.id} value={mic.id}>
-                                        {mic.name}
-                                        {mic.isDefault ? ' (padrão)' : ''}
-                                        {mic.channels === 1 ? ' • mono' : ''}
-                                    </option>
-                                ))}
-                            </>
-                        )}
-                    </select>
-
-                    <button
-                        type="button"
-                        className="secondary-button"
-                        title="Atualizar lista de microfones"
-                        onClick={refreshMics}
-                    >
-                        ↻
-                    </button>
-
-                    <button
-                        type="button"
-                        className={`test-mic-button${testingMic ? ' active' : ''}`}
-                        onClick={toggleMicTest}
-                    >
-                        {testingMic ? 'Parar teste' : 'Testar microfone'}
-                    </button>
-                </div>
-
-                <div className="mic-gain-area">
-                    <label className="mic-gain-label" htmlFor="micGainSlider">
-                        Ganho: <strong>{micGain}%</strong>
-                    </label>
-                    <input
-                        id="micGainSlider"
-                        className="mic-gain-slider"
-                        type="range"
-                        min={0}
-                        max={2000}
-                        step={1}
-                        value={micGain}
-                        onChange={handleGainChange}
-                    />
-                    <div className="mic-gain-presets">
-                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 0 } })}>
-                            0%
-                        </button>
-                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 100 } })}>
-                            100%
-                        </button>
-                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 200 } })}>
-                            200%
-                        </button>
-                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 500 } })}>
-                            500%
-                        </button>
-                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 1000 } })}>
-                            1000%
-                        </button>
-                        <button type="button" className="secondary-button" onClick={() => handleGainChange({ target: { value: 2000 } })}>
-                            2000%
-                        </button>
+            {/* ===== CONTROLES INFERIORES: mute/deafen geral + microfone ===== */}
+            <section className="bottom-controls">
+                <div className="global-voice-controls">
+                    <h2>VOZ GERAL</h2>
+                    <div className="global-voice-buttons">
+                        <IconButton
+                            className={activeCalls.allMuted ? 'is-off' : ''}
+                            icon={activeCalls.allMuted ? micOffIcon : micOnIcon}
+                            title={
+                                activeCalls.allMuted
+                                    ? 'Reativar microfone de todas'
+                                    : 'Mutar microfone de todas'
+                            }
+                            onClick={() => window.discordVoice.toggleAllMute()}
+                        />
+                        <IconButton
+                            className={activeCalls.allDeafened ? 'is-off' : ''}
+                            icon={activeCalls.allDeafened ? deafenOnIcon : deafenOffIcon}
+                            title={
+                                activeCalls.allDeafened
+                                    ? 'Reativar áudio de todas'
+                                    : 'Ensurdecer todas'
+                            }
+                            onClick={() => window.discordVoice.toggleAllDeafen()}
+                        />
+                        <span className="global-voice-hint">
+                            {activeCalls.calls.length
+                                ? `${activeCalls.calls.length} call(s)`
+                                : 'Nenhuma call'}
+                        </span>
                     </div>
                 </div>
+
+                <section className="mic-section" aria-labelledby="micTitle">
+                    <h2 id="micTitle">MICROFONE</h2>
+                    <div className="mic-area">
+                        <select
+                            className="mic-select"
+                            value={selectedMicId ?? ''}
+                            onChange={handleMicChange}
+                            disabled={!mics.length}
+                        >
+                            {!mics.length ? (
+                                <option value="">Carregando microfones...</option>
+                            ) : (
+                                <>
+                                    <option value="">Padrão do sistema</option>
+                                    {mics.map((mic) => (
+                                        <option key={mic.id} value={mic.id}>
+                                            {mic.name}
+                                            {mic.isDefault ? ' (padrão)' : ''}
+                                            {mic.channels === 1 ? ' • mono' : ''}
+                                        </option>
+                                    ))}
+                                </>
+                            )}
+                        </select>
+
+                        <button
+                            type="button"
+                            className="secondary-button"
+                            title="Atualizar lista de microfones"
+                            onClick={refreshMics}
+                        >
+                            ↻
+                        </button>
+
+                        <button
+                            type="button"
+                            className={`test-mic-button${testingMic ? ' active' : ''}`}
+                            onClick={toggleMicTest}
+                        >
+                            {testingMic ? 'Parar teste' : 'Testar microfone'}
+                        </button>
+                    </div>
+
+                    <div className="mic-gain-area">
+                        <label className="mic-gain-label" htmlFor="micGainSlider">
+                            Ganho: <strong>{micGain}%</strong>
+                        </label>
+                        <input
+                            id="micGainSlider"
+                            className="mic-gain-slider"
+                            type="range"
+                            min={0}
+                            max={2000}
+                            step={1}
+                            value={micGain}
+                            onChange={handleGainChange}
+                        />
+                        <div className="mic-gain-presets">
+                            {[0, 100, 200, 500, 1000, 2000].map((v) => (
+                                <button
+                                    key={v}
+                                    type="button"
+                                    className={`secondary-button${micGain === v ? ' preset-active' : ''}`}
+                                    onClick={() => handleGainChange({ target: { value: v } })}
+                                >
+                                    {v}%
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </section>
             </section>
 
             <section className="log-section" aria-labelledby="logTitle">
@@ -470,14 +554,39 @@ function App() {
 }
 
 function ServersPanel({ guilds, selectedGuildId, activeCalls, onSelect }) {
+    const [query, setQuery] = useState('');
+
+    const filtered = useMemo(() => {
+        const q = normalizeSearch(query);
+        if (!q) return guilds;
+        return guilds.filter((g) => normalizeSearch(g.name).includes(q));
+    }, [guilds, query]);
+
     return (
         <aside className="panel servers-panel">
             <h2>SERVIDORES</h2>
+            {
+                guilds.length != 0 && <input
+                    className="panel-search"
+                    type="search"
+                    placeholder="Buscar servidor..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    aria-label="Buscar servidor"
+                />
+            }
             <div className="scroll-list">
                 {!guilds.length ? <p className="empty">Aguardando servidores...</p> : null}
-                {guilds.map((guild) => {
+                {guilds.length && !filtered.length ? (
+                    <p className="empty">Nenhum servidor encontrado.</p>
+                ) : null}
+                {filtered.map((guild) => {
                     const active = activeEntryFor(activeCalls, guild.id);
-                    const classes = ['server-row', guild.id === selectedGuildId ? 'selected' : '', active ? 'connected' : '']
+                    const classes = [
+                        'server-row',
+                        guild.id === selectedGuildId ? 'selected' : '',
+                        active ? 'connected' : ''
+                    ]
                         .filter(Boolean)
                         .join(' ');
 
@@ -513,6 +622,8 @@ function ServersPanel({ guilds, selectedGuildId, activeCalls, onSelect }) {
 }
 
 function ChannelsPanel({ guild, currentUserId, activeCalls }) {
+    const [query, setQuery] = useState('');
+
     const channels = useMemo(() => {
         if (!guild) return [];
         return Object.values(guild.channels)
@@ -520,18 +631,50 @@ function ChannelsPanel({ guild, currentUserId, activeCalls }) {
             .sort((a, b) => (a.position || 0) - (b.position || 0));
     }, [guild, currentUserId]);
 
+    const filtered = useMemo(() => {
+        const q = normalizeSearch(query);
+        if (!q) return channels;
+        return channels.filter((c) => normalizeSearch(c.name).includes(q));
+    }, [channels, query]);
+
+    // limpa busca ao trocar de servidor
+    useEffect(() => {
+        setQuery('');
+    }, [guild?.id]);
+
     return (
         <section className="panel channels-panel">
             <h2>CANAIS DE VOZ</h2>
+            {
+                guild && channels.length != 0 && <input
+                    className="panel-search"
+                    type="search"
+                    placeholder="Buscar canal..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    disabled={!guild}
+                    aria-label="Buscar canal de voz"
+                />
+            }
             <div className="scroll-list">
                 {!guild ? <p className="empty">Selecione um servidor na lateral.</p> : null}
                 {guild ? <h3 className="channel-heading">{guild.name}</h3> : null}
                 {guild && !channels.length ? (
-                    <p className="empty">Voce nao tem permissao para entrar em nenhuma call deste servidor.</p>
+                    <p className="empty">Você não tem permissão para entrar em nenhuma call deste servidor.</p>
                 ) : null}
-                {guild ? channels.map((channel) => (
-                    <ChannelCard key={channel.id} guild={guild} channel={channel} activeCalls={activeCalls} />
-                )) : null}
+                {guild && channels.length && !filtered.length ? (
+                    <p className="empty">Nenhum canal encontrado.</p>
+                ) : null}
+                {guild
+                    ? filtered.map((channel) => (
+                        <ChannelCard
+                            key={channel.id}
+                            guild={guild}
+                            channel={channel}
+                            activeCalls={activeCalls}
+                        />
+                    ))
+                    : null}
             </div>
         </section>
     );
@@ -559,7 +702,7 @@ function ChannelCard({ guild, channel, activeCalls }) {
                         joinCall();
                     }}
                 >
-                    {active ? `${channel.name}  -  CONECTADO` : channel.name}
+                    {active ? `${channel.name}  —  CONECTADO` : channel.name}
                 </button>
                 {active ? (
                     <>
@@ -570,7 +713,7 @@ function ChannelCard({ guild, channel, activeCalls }) {
                         />
                         <IconButton
                             icon={active.deafened ? deafenOnIcon : deafenOffIcon}
-                            title={active.deafened ? 'Reativar audio' : 'Ensurdecer'}
+                            title={active.deafened ? 'Reativar áudio' : 'Ensurdecer'}
                             onClick={() => window.discordVoice.toggleCallDeafen(guild.id)}
                         />
                         <button
@@ -602,7 +745,7 @@ function ChannelCard({ guild, channel, activeCalls }) {
                             url={userAvatarUrl(user)}
                         />
                         <span className="member-name">
-                            {state.member?.nick || user?.global_name || user?.username || 'Usuario desconhecido'}
+                            {state.member?.nick || user?.global_name || user?.username || 'Usuário desconhecido'}
                         </span>
                         {stateText.length ? <span className="member-state">{stateText.join(' / ')}</span> : null}
                     </div>
@@ -618,25 +761,12 @@ function ActiveCallsPanel({ activeCalls }) {
             <h2>CALLS ATIVAS</h2>
             <div className="scroll-list">
                 {!activeCalls.calls.length ? <p className="empty">Nenhuma call ativa.</p> : null}
-                {activeCalls.calls.length ? (
-                    <div className="active-toolbar">
-                        <span className="active-count">{activeCalls.calls.length} conectada(s)</span>
-                        <IconButton
-                            icon={activeCalls.allMuted ? micOffIcon : micOnIcon}
-                            title={activeCalls.allMuted ? 'Reativar microfone de todas' : 'Mutar microfone de todas'}
-                            onClick={() => window.discordVoice.toggleAllMute()}
-                        />
-                        <IconButton
-                            icon={activeCalls.allDeafened ? deafenOnIcon : deafenOffIcon}
-                            title={activeCalls.allDeafened ? 'Reativar audio de todas' : 'Ensurdecer todas'}
-                            onClick={() => window.discordVoice.toggleAllDeafen()}
-                        />
-                    </div>
-                ) : null}
                 {activeCalls.calls.map((entry) => (
                     <article key={entry.guildId} className="active-card">
                         <div className="active-labels">
-                            <span className="active-title">{entry.switching ? `${entry.channelName}...` : entry.channelName}</span>
+                            <span className="active-title">
+                                {entry.switching ? `${entry.channelName}...` : entry.channelName}
+                            </span>
                             <span className="active-meta">{entry.guildName}</span>
                         </div>
                         <IconButton
@@ -646,10 +776,14 @@ function ActiveCallsPanel({ activeCalls }) {
                         />
                         <IconButton
                             icon={entry.deafened ? deafenOnIcon : deafenOffIcon}
-                            title={entry.deafened ? 'Reativar audio' : 'Ensurdecer'}
+                            title={entry.deafened ? 'Reativar áudio' : 'Ensurdecer'}
                             onClick={() => window.discordVoice.toggleCallDeafen(entry.guildId)}
                         />
-                        <button className="leave-button" type="button" onClick={() => window.discordVoice.leaveCall(entry.guildId)}>
+                        <button
+                            className="leave-button"
+                            type="button"
+                            onClick={() => window.discordVoice.leaveCall(entry.guildId)}
+                        >
                             Sair
                         </button>
                     </article>

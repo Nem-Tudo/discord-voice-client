@@ -275,8 +275,8 @@ function startVoiceCall(guild, channel) {
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 920,
-        height: 720,
+        width: 1024,
+        height: 800,
         minWidth: 760,
         minHeight: 560,
         title: 'Discord Voice Pro',

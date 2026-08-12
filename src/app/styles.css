@@ -38,14 +38,84 @@ input:disabled {
     height: 100vh;
     flex-direction: column;
     gap: 10px;
-    padding: 16px;
+    padding: 12px 16px 16px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ===== USUÁRIO LOGADO ===== */
+.user-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 auto;
+    min-height: 52px;
+    padding: 8px 12px;
+    background: #1e1f22;
+}
+
+.user-bar-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: inline-flex;
+    overflow: hidden;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    color: #fff;
+    background: #5865f2;
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.user-bar-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.user-bar-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
+}
+
+.user-bar-label {
+    color: #23a55a;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.user-bar-name {
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.user-bar-calls {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: #2b2d31;
+    color: #b5bac1;
+    font-size: 11px;
+    font-weight: 600;
 }
 
 .token-bar {
     display: grid;
-    grid-template-columns: minmax(260px, 1fr) 180px;
+    grid-template-columns: minmax(200px, 1fr) minmax(140px, 180px);
     gap: 10px;
     align-items: end;
+    flex: 0 0 auto;
 }
 
 .field {
@@ -58,11 +128,13 @@ input:disabled {
 .field span,
 .panel h2,
 .log-section h2,
-.mic-section h2 {
+.mic-section h2,
+.global-voice-controls h2 {
     margin: 0;
     color: #b5bac1;
     font-size: 11px;
     font-weight: 700;
+    letter-spacing: 0.04em;
 }
 
 .field input {
@@ -112,19 +184,21 @@ input:disabled {
     margin: 0;
     color: #b5bac1;
     font-size: 12px;
+    flex: 0 0 auto;
 }
 
 .browser {
     display: grid;
     flex: 1;
     min-height: 0;
-    grid-template-columns: 220px minmax(280px, 1fr) 230px;
+    grid-template-columns: minmax(180px, 240px) minmax(240px, 1fr) minmax(180px, 240px);
     gap: 8px;
 }
 
 .panel,
 .log-section,
-.mic-section {
+.mic-section,
+.global-voice-controls {
     display: flex;
     min-height: 0;
     flex-direction: column;
@@ -142,6 +216,32 @@ input:disabled {
     background: #202225;
 }
 
+/* ===== BUSCA ===== */
+.panel-search {
+    width: 100%;
+    min-height: 32px;
+    padding: 6px 10px;
+    color: #f2f3f5;
+    background: #2b2d31;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    outline: none;
+    font-size: 12px;
+    flex: 0 0 auto;
+}
+
+.panel-search::placeholder {
+    color: #949ba4;
+}
+
+.panel-search:focus {
+    border-color: #5865f2;
+}
+
+.panel-search:disabled {
+    opacity: 0.5;
+}
+
 .scroll-list {
     display: flex;
     min-height: 0;
@@ -153,8 +253,7 @@ input:disabled {
 
 .server-row,
 .channel-card,
-.active-card,
-.active-toolbar {
+.active-card {
     border-radius: 6px;
 }
 
@@ -208,7 +307,6 @@ input:disabled {
 }
 
 .server-name,
-.channel-title,
 .active-title,
 .member-name {
     overflow: hidden;
@@ -238,10 +336,11 @@ input:disabled {
     margin: 0 0 2px;
     overflow: hidden;
     color: #f2f3f5;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .channel-card,
@@ -254,12 +353,12 @@ input:disabled {
     flex-direction: column;
     gap: 4px;
     padding: 8px;
+    cursor: pointer;
 }
 
 .channel-header,
 .member-row,
-.active-card,
-.active-toolbar {
+.active-card {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -300,6 +399,14 @@ input:disabled {
 
 .icon-button:hover {
     background: #686b73;
+}
+
+.icon-button.is-off {
+    background: #da373c;
+}
+
+.icon-button.is-off:hover {
+    background: #a1282c;
 }
 
 .icon-button img {
@@ -347,11 +454,6 @@ input:disabled {
     font-size: 13px;
 }
 
-.active-toolbar {
-    min-height: 38px;
-    padding: 3px;
-}
-
 .active-count,
 .active-meta {
     min-width: 0;
@@ -382,9 +484,40 @@ input:disabled {
     font-weight: 700;
 }
 
-/* ===== MICROFONE (mesmo estilo dos logs) ===== */
-.mic-section {
+/* ===== RODAPÉ: mute geral + microfone ===== */
+.bottom-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
     flex: 0 0 auto;
+    align-items: stretch;
+}
+
+.global-voice-controls {
+    min-width: 140px;
+    padding: 8px;
+    background: #1e1f22;
+    border-radius: 6px;
+}
+
+.global-voice-buttons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 44px;
+    padding: 4px 0;
+}
+
+.global-voice-hint {
+    color: #949ba4;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.mic-section {
+    flex: 1;
+    min-width: 0;
 }
 
 .mic-area {
@@ -436,6 +569,11 @@ input:disabled {
     background: #686b73;
 }
 
+.secondary-button.preset-active {
+    background: #5865f2;
+    color: #fff;
+}
+
 .test-mic-button {
     min-height: 32px;
     padding: 6px 14px;
@@ -461,9 +599,9 @@ input:disabled {
     background: #a1282c;
 }
 
-/* ===== LOGS ===== */
 .log-section {
-    flex: 0 0 100px;
+    flex: 0 0 90px;
+    min-height: 70px;
 }
 
 .log-area {
@@ -482,7 +620,6 @@ input:disabled {
     white-space: pre-wrap;
 }
 
-/* ===== GANHO DO MICROFONE ===== */
 .mic-gain-area {
     display: flex;
     flex-direction: column;
@@ -544,26 +681,63 @@ input:disabled {
     padding: 4px 8px;
 }
 
+/* ===== RESPONSIVO ===== */
+@media (max-width: 960px) {
+    .browser {
+        grid-template-columns: minmax(160px, 200px) minmax(0, 1fr) minmax(160px, 200px);
+    }
+}
+
 @media (max-width: 820px) {
+    .app-shell {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+    }
+
     .token-bar {
         grid-template-columns: 1fr;
     }
 
     .browser {
         grid-template-columns: 1fr;
-        overflow: auto;
+        flex: none;
     }
 
     .panel {
-        min-height: 220px;
+        min-height: 200px;
+        max-height: 320px;
+    }
+
+    .bottom-controls {
+        grid-template-columns: 1fr;
+    }
+
+    .global-voice-controls {
+        min-width: 0;
+    }
+
+    .mic-area {
+        flex-wrap: wrap;
     }
 
     .log-section {
         flex-basis: 120px;
     }
+}
 
-    .mic-area {
-        flex-wrap: wrap;
+@media (max-width: 480px) {
+    .app-shell {
+        padding: 10px;
+        gap: 8px;
+    }
+
+    .user-bar {
+        padding: 8px;
+    }
+
+    .test-mic-button {
+        width: 100%;
     }
 }
 
