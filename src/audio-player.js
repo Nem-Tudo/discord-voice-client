@@ -362,6 +362,18 @@ class AudioPlayer {
         this.log(`[Áudio] Stream de saída encerrado para SSRC ${ssrc}.`);
     }
 
+    reset() {
+        for (const ssrc of Array.from(this.userStreams.keys())) {
+            this.releaseSsrc(ssrc);
+        }
+        this.userStreams.clear();
+        this.isInitialized = false;
+        this.isDestroyed = false;
+        for (const key in this.debugFlags) {
+            this.debugFlags[key] = false;
+        }
+    }
+
     destroy() {
         this.isDestroyed = true;
 

@@ -338,12 +338,51 @@ function startVoiceCall(guild, channel, {
         deviceId: selectedMicId,
         gainPercent: selectedMicGain,
         onLog: log,
+        onVoiceStateUpdate: (state) => {
+            if (voiceClients.get(guild.id) !== entry) return;
+
+            const ownUserId =
+                typeof voiceClient.getUserId === 'function'
+                    ? voiceClient.getUserId()
+                    : null;
+
+            if (ownUserId && state.user_id === ownUserId) {
+                const movedTo = state.channel_id ? String(state.channel_id) : null;
+
+                if (movedTo && movedTo !== entry.channelId) {
+                    const nextChannel =
+                        guild.channels?.[movedTo] ||
+                        { id: movedTo, name: `Canal ${movedTo}` };
+
+                    log(`[Voice] Movido de ${entry.channelName} para ${nextChannel.name}. Reconectando...`);
+
+                    entry.channelId = movedTo;
+                    entry.channelName = nextChannel.name;
+                    entry.status = 'connecting';
+                    entry.error = null;
+                    entry.pending = null;
+                    publishActiveCalls();
+
+                    if (typeof voiceClient.moveToChannel === 'function') {
+                        voiceClient.moveToChannel(movedTo);
+                    }
+
+                    sendToRenderer('voice:status', `Você foi movido para ${nextChannel.name}. Reconectando...`);
+                } else if (!movedTo && entry.status !== 'error') {
+                    entry.status = 'error';
+                    entry.error = 'Você foi removido do canal de voz.';
+                    entry.pending = null;
+                    publishActiveCalls();
+                    sendToRenderer('voice:status', 'Você foi removido do canal de voz.');
+                }
+            }
+        },
         onReady: () => {
             entry.status = 'connected';
             entry.error = null;
 
             log(
-                `Conectado em ${channel.name} (${guild.name}).`
+                `Conectado em ${entry.channelName} (${guild.name}).`
             );
 
             applyMicToClient(voiceClient);
@@ -354,7 +393,7 @@ function startVoiceCall(guild, channel, {
 
             sendToRenderer(
                 'voice:status',
-                `Conectado em ${channel.name}.`
+                `Conectado em ${entry.channelName}.`
             );
         },
         onDisconnected: (reason) => {
@@ -386,7 +425,7 @@ function startVoiceCall(guild, channel, {
 
                 sendToRenderer(
                     'voice:status',
-                    `Erro ao conectar em ${channel.name}.`
+                    `Erro ao conectar em ${entry.channelName}.`
                 );
 
                 // Deixa o erro visível por alguns segundos.
@@ -407,12 +446,12 @@ function startVoiceCall(guild, channel, {
             publishActiveCalls();
 
             log(
-                `[Voice] Conexão perdida em ${channel.name}: ${reason || 'motivo desconhecido'}`
+                `[Voice] Conexão perdida em ${entry.channelName}: ${reason || 'motivo desconhecido'}`
             );
 
             sendToRenderer(
                 'voice:status',
-                `Erro: conexão com ${channel.name} foi perdida.`
+                `Erro: conexão com ${entry.channelName} foi perdida.`
             );
 
             setTimeout(() => {
@@ -434,7 +473,7 @@ function startVoiceCall(guild, channel, {
 
             sendToRenderer(
                 'voice:status',
-                `Erro ao entrar em ${channel.name}: ${reason}`
+                `Erro ao entrar em ${entry.channelName}: ${reason}`
             );
 
             log(

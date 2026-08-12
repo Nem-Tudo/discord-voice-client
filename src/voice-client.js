@@ -59,7 +59,7 @@ const VoiceOp = {
 function createVoiceClient({
     token,
     guildId,
-    channelId,
+    channelId: initialChannelId,
     deviceId = null,
     gainPercent = 100,
     onLog,
@@ -70,6 +70,8 @@ function createVoiceClient({
     onDisconnected,
     onJoinError
 }) {
+    let channelId = initialChannelId;
+
     const log = (msg) => {
         if (onLog) {
             onLog(msg);
@@ -847,7 +849,20 @@ function createVoiceClient({
                         gainPercent: preferredGainPercent
                     });
                 } else {
-                    // Já inicializado (reconexão rara): aplica preferências atuais
+                    // Após uma movimentação, o sender precisa apontar para o novo UDP/crypto.
+                    if (typeof audioSender.updateTransport === 'function') {
+                        audioSender.updateTransport({
+                            ssrc,
+                            udpSocket,
+                            voiceIp,
+                            voicePort,
+                            secretKey: voiceSecretKey,
+                            encryptionMode: voiceEncryptionMode,
+                            daveSession,
+                            botUserId,
+                            sendVoice
+                        });
+                    }
                     audioSender.setDevice(preferredDeviceId);
                     audioSender.setGain(preferredGainPercent);
                 }
@@ -1680,6 +1695,86 @@ function createVoiceClient({
 
 
     // ============================================================
+    // TROCA DE CANAL (movimentação externa)
+    // ============================================================
+
+    function resetVoiceTransportForMove() {
+        clearInterval(voiceHeartbeatInterval);
+        voiceHeartbeatInterval = null;
+
+        if (udpSocket) {
+            try {
+                udpSocket.removeAllListeners();
+                udpSocket.close();
+            } catch (_) { }
+            udpSocket = null;
+        }
+
+        if (voiceWs) {
+            try {
+                voiceWs.removeAllListeners();
+                voiceWs.close();
+            } catch (_) { }
+            voiceWs = null;
+        }
+
+        voiceSecretKey = null;
+        voiceEncryptionMode = null;
+        voiceSessionId = null;
+        voiceServerToken = null;
+        voiceEndpoint = null;
+        voiceIp = null;
+        voicePort = null;
+        ssrc = null;
+        sessionEstablished = false;
+        daveProtocolVersion = 0;
+        davePendingTransitions.clear();
+        recognizedUserIds.clear();
+        ssrcMap.clear();
+
+        // O áudio de entrada precisa apontar para o novo transporte.
+        if (typeof audioSender.stopSpeaking === 'function') {
+            try { audioSender.stopSpeaking(); } catch (_) { }
+        }
+
+        if (typeof audioPlayer.reset === 'function') {
+            try { audioPlayer.reset(); } catch (_) { }
+        }
+    }
+
+    function moveToChannel(nextChannelId) {
+        if (!nextChannelId || nextChannelId === channelId) return false;
+
+        log(`[Voice] movimentado para ${nextChannelId}; reconectando...`);
+
+        clearTimeout(joinTimeout);
+        joinTimeout = null;
+        joinFailureReported = false;
+        intentionalDisconnect = false;
+
+        channelId = String(nextChannelId);
+        resetVoiceTransportForMove();
+
+        // O Gateway principal continua vivo; basta selecionar o novo canal.
+        joinVoiceChannel();
+
+        joinTimeout = setTimeout(() => {
+            if (
+                !sessionEstablished &&
+                !intentionalDisconnect &&
+                !joinFailureReported
+            ) {
+                joinFailureReported = true;
+                const reason = 'Tempo limite excedido ao reconectar após ser movido de canal.';
+                log(`[Voice] ${reason}`);
+                if (onJoinError) onJoinError(reason);
+            }
+        }, 12000);
+
+        return true;
+    }
+
+    // ============================================================
     // DISCONNECT
     // ============================================================
 
@@ -1804,6 +1899,14 @@ function createVoiceClient({
             connectGateway();
         },
 
+
+        moveToChannel(nextChannelId) {
+            return moveToChannel(nextChannelId);
+        },
+
+        getUserId() {
+            return botUserId;
+        },
 
         disconnect() {
             intentionalDisconnect = true;

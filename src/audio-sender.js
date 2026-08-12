@@ -178,6 +178,20 @@ class AudioSender {
         return true;
     }
 
+    updateTransport({ ssrc, udpSocket, voiceIp, voicePort, secretKey, encryptionMode, daveSession, botUserId, sendVoice }) {
+        this.ssrc = ssrc;
+        this.udpSocket = udpSocket;
+        this.voiceIp = voiceIp;
+        this.voicePort = voicePort;
+        this.secretKey = secretKey;
+        this.encryptionMode = encryptionMode;
+        this.daveSession = daveSession;
+        this.botUserId = botUserId;
+        this.sendVoice = sendVoice;
+        this.sequence = 0;
+        this.timestamp = 0;
+    }
+
     /** Atualiza a referência da sessão DAVE (após reinit/welcome) */
     setDaveSession(session) {
         this.daveSession = session || null;
