@@ -5,6 +5,7 @@ const dgram = require('dgram');
 
 const { AudioPlayer } = require('./audio-player');
 const { AudioSender } = require('./audio-sender');
+const { createStreamViewer } = require('./stream-viewer');
 
 let Davey = null;
 
@@ -70,7 +71,9 @@ function createVoiceClient({
     onAudioLevel,
     onReady,
     onDisconnected,
-    onJoinError
+    onJoinError,
+    onStreamFrame,
+    onStreamStatus
 }) {
     let channelId = initialChannelId;
 
@@ -205,6 +208,38 @@ function createVoiceClient({
             onAudioLevel({ guild_id: guildId, direction: 'output', level: Number(level) || 0 });
         }
     });
+
+    // A Go Live é uma segunda media session. Ela compartilha o Gateway
+    // principal, mas possui seu próprio Voice Gateway + DAVE + UDP.
+    let streamViewer = null;
+
+    const ensureStreamViewer = () => {
+        if (streamViewer) return streamViewer;
+
+        streamViewer = createStreamViewer({
+            token,
+            guildId,
+            channelId,
+            botUserId: () => botUserId,
+            sessionId: () => voiceSessionId,
+            sendGateway,
+            log,
+            onFrame: (frame) => {
+                if (typeof onStreamFrame === 'function') onStreamFrame(frame);
+            },
+            onStatus: (status) => {
+                if (typeof onStreamStatus === 'function') {
+                    onStreamStatus({
+                        guild_id: guildId,
+                        channel_id: channelId,
+                        ...status
+                    });
+                }
+            }
+        });
+
+        return streamViewer;
+    };
 
 
     // ============================================================
@@ -498,6 +533,14 @@ function createVoiceClient({
 
                 break;
             }
+
+            case 'STREAM_CREATE':
+            case 'STREAM_SERVER_UPDATE':
+            case 'STREAM_DELETE': {
+                streamViewer?.handleGatewayEvent(type, d);
+                break;
+            }
+
 
             case 'GUILD_CREATE': {
                 if (onGuildCreate) {
@@ -1904,6 +1947,12 @@ function createVoiceClient({
 
 
         /*
+         * Desliga a transmissão assistida, caso exista.
+         */
+        try { streamViewer?.stop({ sendDelete: false }); } catch (_) {}
+        streamViewer = null;
+
+        /*
          * Desliga áudio.
          */
         audioSender.destroy();
@@ -1992,6 +2041,15 @@ function createVoiceClient({
 
         getUserId() {
             return botUserId;
+        },
+
+        watchStream(streamKey, userId) {
+            const viewer = ensureStreamViewer();
+            viewer.watch(streamKey, userId);
+        },
+
+        stopWatchingStream() {
+            streamViewer?.stop();
         },
 
         disconnect() {

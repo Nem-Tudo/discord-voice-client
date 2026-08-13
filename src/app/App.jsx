@@ -1186,11 +1186,20 @@ function CameraIcon() {
     );
 }
 
-function StreamBadge() {
+function StreamBadge({ onClick, disabled = false }) {
     return (
-        <span className="discord-member-live" title="Transmitindo">
+        <button
+            type="button"
+            className={`discord-member-live${disabled ? ' disabled' : ''}`}
+            title={disabled ? 'Entre na call para assistir' : 'Assistir transmissão'}
+            disabled={disabled}
+            onClick={(event) => {
+                event.stopPropagation();
+                if (!disabled) onClick?.(event);
+            }}
+        >
             LIVE
-        </span>
+        </button>
     );
 }
 
@@ -1537,6 +1546,23 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
         });
     };
 
+    const watchStream = async (userId) => {
+        if (!connected) {
+            alert('Entre nesta call para assistir à transmissão.');
+            return;
+        }
+
+        const result = await window.discordVoice.watchStream?.({
+            guildId: guild.id,
+            channelId: channel.id,
+            userId: String(userId)
+        });
+
+        if (result?.ok === false) {
+            alert(result.error || 'Não foi possível abrir a transmissão.');
+        }
+    };
+
     return (
         <div
             className={[
@@ -1652,7 +1678,10 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
                                 ) : null}
 
                                 {state.self_stream ? (
-                                    <StreamBadge />
+                                    <StreamBadge
+                                        disabled={!connected}
+                                        onClick={() => watchStream(state.user_id)}
+                                    />
                                 ) : null}
 
                                 {muted ? (

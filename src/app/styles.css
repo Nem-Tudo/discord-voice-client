@@ -1229,6 +1229,10 @@ input:disabled {
     line-height: 1;
     letter-spacing: 0.04em;
 }
+.discord-member-live { border: 0; cursor: pointer; font-family: inherit; }
+.discord-member-live:hover { filter: brightness(1.12); }
+.discord-member-live.disabled { opacity: .45; cursor: not-allowed; }
+
 
 .discord-member-state {
     display: inline-flex;

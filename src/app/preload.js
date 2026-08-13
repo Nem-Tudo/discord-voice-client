@@ -91,5 +91,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     getNoiseSuppression: () => ipcRenderer.invoke('voice:get-noise-suppression'),
     startMicTest: (deviceId) => ipcRenderer.invoke('voice:start-mic-test', deviceId),
     stopMicTest: () => ipcRenderer.invoke('voice:stop-mic-test'),
-    openDiscordUser: (userId) => ipcRenderer.invoke('open-discord-user', userId)
+    openDiscordUser: (userId) => ipcRenderer.invoke('open-discord-user', userId),
+    watchStream: (data) => ipcRenderer.invoke('voice:watch-stream', data),
+    stopWatchStream: (streamKey) => ipcRenderer.invoke('voice:stop-watch-stream', { streamKey }),
+    onStreamVideoFrame: (callback) => subscribe('stream:video-frame', callback),
+    onStreamStatus: (callback) => subscribe('stream:status', callback)
 });

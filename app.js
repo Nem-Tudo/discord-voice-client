@@ -14,6 +14,7 @@ const [, , ARG_TOKEN] = process.argv;
 
 let mainWindow = null;
 let logsWindow = null;
+const streamWindows = new Map();
 let browserClient = null;
 let activeToken = null;
 let allMuted = false;
@@ -123,6 +124,60 @@ function sendToRenderer(channel, payload) {
     mainWindow.webContents.send(channel, payload);
 }
 
+function streamWindowKey(guildId, channelId, userId) {
+    return `guild:${guildId}:${channelId}:${userId}`;
+}
+
+function createStreamWindow(streamKey, userId) {
+    const existing = streamWindows.get(streamKey);
+    if (existing && !existing.isDestroyed()) {
+        existing.focus();
+        return existing;
+    }
+
+    const win = new BrowserWindow({
+        width: 1100,
+        height: 700,
+        minWidth: 500,
+        minHeight: 350,
+        title: `Discord Voice Pro — Live`,
+        backgroundColor: '#000000',
+        parent: mainWindow || undefined,
+        webPreferences: {
+            preload: path.join(__dirname, 'src', 'app', 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
+
+    streamWindows.set(streamKey, win);
+
+    win.loadFile(
+        path.join(__dirname, 'src', 'app', 'stream.html'),
+        { query: { streamKey, userId: String(userId || '') } }
+    );
+
+    win.on('closed', () => {
+        streamWindows.delete(streamKey);
+
+        // The media session is separate from the voice call, so closing the
+        // viewer should stop only this stream subscription.
+        const parsed = streamKey.split(':');
+        if (parsed.length === 4) {
+            const entry = voiceClients.get(parsed[1]);
+            entry?.client?.stopWatchingStream?.();
+        }
+    });
+
+    return win;
+}
+
+function sendToStreamWindow(streamKey, channel, payload) {
+    const win = streamWindows.get(streamKey);
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send(channel, payload);
+}
+
 function sendToLogsWindow(channel, payload) {
     if (!logsWindow || logsWindow.isDestroyed()) return;
     logsWindow.webContents.send(channel, payload);
@@ -200,8 +255,15 @@ function logout() {
 function stopAllVoiceClients() {
     for (const entry of voiceClients.values()) {
         entry.pending = null;
+        entry.client.stopWatchingStream?.();
         entry.client.disconnect();
     }
+
+    for (const win of streamWindows.values()) {
+        if (win && !win.isDestroyed()) win.close();
+    }
+    streamWindows.clear();
+
     voiceClients.clear();
     allMuted = false;
     allDeafened = false;
@@ -565,6 +627,21 @@ function startVoiceCall(guild, channel, {
                 publishActiveCalls();
             }
         },
+        onStreamFrame: (frame) => {
+            const streamKey = frame?.streamKey || entry.streamKey;
+            if (!streamKey) return;
+            sendToStreamWindow(streamKey, 'stream:video-frame', {
+                codec: frame.codec,
+                key: Boolean(frame.key),
+                timestamp: Number(frame.timestamp || 0),
+                data: Buffer.from(frame.data || [])
+            });
+        },
+        onStreamStatus: (status) => {
+            const streamKey = status?.streamKey || entry.streamKey;
+            if (!streamKey) return;
+            sendToStreamWindow(streamKey, 'stream:status', status);
+        },
         onReady: () => {
             entry.status = 'connected';
             entry.error = null;
@@ -784,6 +861,11 @@ function createWindow() {
         if (logsWindow && !logsWindow.isDestroyed()) {
             logsWindow.close();
         }
+
+        for (const win of streamWindows.values()) {
+            if (win && !win.isDestroyed()) win.close();
+        }
+        streamWindows.clear();
     });
 
     createLogsWindow();
@@ -846,6 +928,51 @@ ipcMain.handle('voice:load-servers', async (_event, { token }) => {
 
     browserClient = nextClient;
     browserClient.connect();
+});
+
+ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId }) => {
+    const entry = voiceClients.get(String(guildId));
+    if (!entry?.client || entry.status !== 'connected') {
+        return { ok: false, error: 'Você precisa estar conectado à call.' };
+    }
+
+    const streamKey = streamWindowKey(guildId, channelId, userId);
+
+    if (entry.streamKey && entry.streamKey !== streamKey) {
+        const oldWindow = streamWindows.get(entry.streamKey);
+        if (oldWindow && !oldWindow.isDestroyed()) oldWindow.close();
+        entry.client.stopWatchingStream?.();
+    }
+
+    entry.streamKey = streamKey;
+    const streamWindow = createStreamWindow(streamKey, userId);
+
+    const startWatching = () => {
+        if (entry.streamKey !== streamKey) return;
+        entry.client.watchStream?.(streamKey, userId);
+    };
+
+    if (streamWindow.webContents.isLoading()) {
+        streamWindow.webContents.once('did-finish-load', startWatching);
+    } else {
+        startWatching();
+    }
+
+    return { ok: true, streamKey };
+});
+
+ipcMain.handle('voice:stop-watch-stream', async (_event, { streamKey }) => {
+    for (const entry of voiceClients.values()) {
+        if (entry.streamKey === streamKey) {
+            entry.client?.stopWatchingStream?.();
+            entry.streamKey = null;
+        }
+    }
+
+    const win = streamWindows.get(streamKey);
+    if (win && !win.isDestroyed()) win.close();
+
+    return { ok: true };
 });
 
 ipcMain.handle('voice:join-call', async (_event, { guild, channel }) => {
