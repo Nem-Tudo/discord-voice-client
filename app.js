@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const { execSync } = require('child_process');
 const fs = require('fs');
 const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification } = require('electron');
 
