@@ -1,7 +1,8 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const fs = require('fs');
+const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification } = require('electron');
 
 const { createVoiceClient } = require('./src/voice-client.js');
 const { AudioSender } = require('./src/audio-sender.js');
@@ -32,6 +33,90 @@ let micTestPipeline = null;
 let micTestGainProcessor = null;
 
 const voiceClients = new Map();
+
+// ============================================================
+// Atalhos de teclado globais (mutar/ensurdecer)
+// ============================================================
+// Funcionam mesmo com outro programa em foco (Discord, jogo, etc.),
+// pois usam globalShortcut do Electron em vez de um listener da janela.
+
+const SHORTCUTS_CONFIG_PATH = path.join(app.getPath('userData'), 'shortcuts.json');
+
+const DEFAULT_SHORTCUTS = {
+    toggleMute: 'CommandOrControl+Shift+M',
+    toggleDeafen: 'CommandOrControl+Shift+D'
+};
+
+/** Atalhos atualmente configurados (accelerator do Electron, ou '' para desativado) */
+let shortcuts = { ...DEFAULT_SHORTCUTS };
+
+/** true enquanto a UI está gravando um atalho novo (ver shortcuts:suspend) */
+let shortcutsSuspended = false;
+
+function loadShortcuts() {
+    try {
+        const raw = fs.readFileSync(SHORTCUTS_CONFIG_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        shortcuts = {
+            toggleMute: typeof parsed.toggleMute === 'string' ? parsed.toggleMute : DEFAULT_SHORTCUTS.toggleMute,
+            toggleDeafen: typeof parsed.toggleDeafen === 'string' ? parsed.toggleDeafen : DEFAULT_SHORTCUTS.toggleDeafen
+        };
+    } catch (_) {
+        // Primeiro uso, arquivo corrompido ou ausente: cai nos padrões.
+        shortcuts = { ...DEFAULT_SHORTCUTS };
+    }
+}
+
+function saveShortcuts() {
+    try {
+        fs.mkdirSync(path.dirname(SHORTCUTS_CONFIG_PATH), { recursive: true });
+        fs.writeFileSync(SHORTCUTS_CONFIG_PATH, JSON.stringify(shortcuts, null, 2), 'utf8');
+    } catch (error) {
+        log(`[Atalhos] Erro ao salvar configuração: ${error.message}`);
+    }
+}
+
+/** Mostra feedback do atalho mesmo se a janela não estiver em foco. */
+function notifyShortcutAction(text) {
+    sendToRenderer('voice:status', text);
+    log(`[Atalhos] ${text}`);
+    try {
+        if (Notification.isSupported()) {
+            new Notification({ title: 'Discord Voice Pro', body: text, silent: true }).show();
+        }
+    } catch (_) { }
+}
+
+/** Registra os atalhos configurados. Chame de novo sempre que `shortcuts` mudar. */
+function registerGlobalShortcuts() {
+    globalShortcut.unregisterAll();
+
+    if (shortcutsSuspended) {
+        // A UI está gravando uma combinação nova: mantém tudo desregistrado
+        // pra não disparar mute/deafen enquanto o usuário aperta as teclas,
+        // nem competir pela combinação sendo capturada.
+        return { toggleMute: true, toggleDeafen: true };
+    }
+
+    const registered = { toggleMute: true, toggleDeafen: true };
+
+    if (shortcuts.toggleMute) {
+        registered.toggleMute = globalShortcut.register(shortcuts.toggleMute, () => toggleAllMute());
+        if (!registered.toggleMute) {
+            log(`[Atalhos] Falha ao registrar atalho de mutar ("${shortcuts.toggleMute}"). Pode já estar em uso por outro programa.`);
+        }
+    }
+
+    if (shortcuts.toggleDeafen) {
+        registered.toggleDeafen = globalShortcut.register(shortcuts.toggleDeafen, () => toggleAllDeafen());
+        if (!registered.toggleDeafen) {
+            log(`[Atalhos] Falha ao registrar atalho de ensurdecer ("${shortcuts.toggleDeafen}"). Pode já estar em uso por outro programa.`);
+        }
+    }
+
+    sendToRenderer('voice:shortcuts', { ...shortcuts, registered });
+    return registered;
+}
 
 function sendToRenderer(channel, payload) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -256,6 +341,39 @@ function applySpeakingState(entry) {
     } else if (!shouldSpeak && typeof entry.client.stopMic === 'function') {
         entry.client.stopMic();
     }
+}
+
+/**
+ * Muta/desmuta todas as calls ativas. Usado tanto pelo IPC (UI) quanto
+ * pelo atalho de teclado global.
+ */
+function toggleAllMute() {
+    allMuted = !allMuted;
+    for (const entry of voiceClients.values()) {
+        entry.muted = allMuted;
+        entry.client.setMute(allMuted);
+        applySpeakingState(entry);
+    }
+    publishActiveCalls();
+    notifyShortcutAction(allMuted ? 'Microfone mutado' : 'Microfone reativado');
+    return allMuted;
+}
+
+/**
+ * Ensurdece/reativa todas as calls ativas. Ensurdecer também muta o mic,
+ * igual ao comportamento do Discord.
+ */
+function toggleAllDeafen() {
+    allDeafened = !allDeafened;
+    for (const entry of voiceClients.values()) {
+        entry.deafened = allDeafened;
+        entry.client.setDeafen(allDeafened);
+        if (allDeafened) entry.muted = true;
+        applySpeakingState(entry);
+    }
+    publishActiveCalls();
+    notifyShortcutAction(allDeafened ? 'Áudio ensurdecido' : 'Áudio reativado');
+    return allDeafened;
 }
 
 function showVoiceJoinError(guild, channel, message) {
@@ -647,6 +765,7 @@ function createWindow() {
 
     mainWindow.webContents.once('did-finish-load', () => {
         sendToRenderer('voice:defaults', { token: ARG_TOKEN || '' });
+        sendToRenderer('voice:shortcuts', { ...shortcuts });
         publishActiveCalls();
     });
 
@@ -791,24 +910,79 @@ ipcMain.handle('voice:leave-all-calls', async () => {
 });
 
 ipcMain.handle('voice:set-all-mute', async () => {
-    allMuted = !allMuted;
-    for (const entry of voiceClients.values()) {
-        entry.muted = allMuted;
-        entry.client.setMute(allMuted);
-        applySpeakingState(entry);
-    }
-    publishActiveCalls();
+    toggleAllMute();
 });
 
 ipcMain.handle('voice:set-all-deafen', async () => {
-    allDeafened = !allDeafened;
-    for (const entry of voiceClients.values()) {
-        entry.deafened = allDeafened;
-        entry.client.setDeafen(allDeafened);
-        if (allDeafened) entry.muted = true;
-        applySpeakingState(entry);
+    toggleAllDeafen();
+});
+
+// ============================================================
+// IPC – atalhos de teclado globais
+// ============================================================
+
+ipcMain.handle('shortcuts:get', async () => ({ ...shortcuts }));
+
+/**
+ * Troca o accelerator de uma ação ('toggleMute' | 'toggleDeafen').
+ * Envie accelerator = '' para desativar o atalho daquela ação.
+ * Formato do accelerator segue o padrão do Electron, ex: "CommandOrControl+Shift+M".
+ */
+ipcMain.handle('shortcuts:set', async (_event, { action, accelerator } = {}) => {
+    if (action !== 'toggleMute' && action !== 'toggleDeafen') {
+        return { ok: false, error: 'Ação de atalho inválida.' };
     }
-    publishActiveCalls();
+
+    const value = String(accelerator || '').trim();
+    const other = action === 'toggleMute' ? shortcuts.toggleDeafen : shortcuts.toggleMute;
+
+    if (value && value === other) {
+        return { ok: false, error: 'Esse atalho já está em uso pela outra ação.' };
+    }
+
+    // Testa se o accelerator é válido/livre antes de confirmar a troca:
+    // libera tudo, tenta registrar o novo valor sozinho e já desregistra.
+    globalShortcut.unregisterAll();
+    let valid = true;
+    if (value) {
+        valid = globalShortcut.register(value, () => { });
+        if (valid) globalShortcut.unregister(value);
+    }
+
+    if (!valid) {
+        registerGlobalShortcuts(); // restaura os atalhos anteriores
+        return { ok: false, error: 'Combinação inválida ou já usada por outro programa.' };
+    }
+
+    shortcuts = { ...shortcuts, [action]: value };
+    saveShortcuts();
+    const registered = registerGlobalShortcuts();
+
+    return { ok: true, shortcuts: { ...shortcuts }, registered };
+});
+
+ipcMain.handle('shortcuts:reset', async () => {
+    shortcuts = { ...DEFAULT_SHORTCUTS };
+    saveShortcuts();
+    const registered = registerGlobalShortcuts();
+    return { ok: true, shortcuts: { ...shortcuts }, registered };
+});
+
+/**
+ * Pausa os atalhos globais enquanto a UI está gravando uma combinação nova.
+ * Sem isso, apertar o atalho atual durante a gravação executaria a ação
+ * (mutar/ensurdecer) ao mesmo tempo em que está sendo capturada como tecla.
+ */
+ipcMain.handle('shortcuts:suspend', async () => {
+    shortcutsSuspended = true;
+    globalShortcut.unregisterAll();
+    return true;
+});
+
+ipcMain.handle('shortcuts:resume', async () => {
+    shortcutsSuspended = false;
+    registerGlobalShortcuts();
+    return true;
 });
 
 // ============================================================
@@ -903,7 +1077,11 @@ ipcMain.handle('voice:stop-mic-test', async () => {
 // App lifecycle
 // ============================================================
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+    loadShortcuts();
+    registerGlobalShortcuts();
+    createWindow();
+});
 
 app.on('window-all-closed', () => {
     stopMicTestInternal();
@@ -923,7 +1101,13 @@ app.on('activate', () => {
     }
 });
 
+app.on('will-quit', () => {
+    // Evita que os atalhos globais fiquem "presos" no SO após o app fechar.
+    globalShortcut.unregisterAll();
+});
+
 process.on('SIGINT', () => {
+    globalShortcut.unregisterAll();
     stopMicTestInternal();
     stopAllVoiceClients();
     stopBrowserClient();

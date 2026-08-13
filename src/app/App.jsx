@@ -14,6 +14,244 @@ const MOVE_MEMBERS = 2n;
 
 const emptyActiveCalls = { allMuted: false, allDeafened: false, noiseSuppressionEnabled: true, calls: [] };
 
+// ============================================================
+// Atalhos de teclado — utilidades de captura (botão direito nos
+// botões de mutar/ensurdecer do toolbar).
+// ============================================================
+
+const SHORTCUT_MODIFIER_CODES = new Set([
+    'ControlLeft', 'ControlRight',
+    'AltLeft', 'AltRight',
+    'ShiftLeft', 'ShiftRight',
+    'MetaLeft', 'MetaRight'
+]);
+
+const SHORTCUT_KEY_NAME_MAP = (() => {
+    const map = {
+        Escape: 'Escape', Tab: 'Tab', Space: 'Space', Enter: 'Return', NumpadEnter: 'Return',
+        Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End',
+        PageUp: 'PageUp', PageDown: 'PageDown', PrintScreen: 'PrintScreen', CapsLock: 'Capslock',
+        ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+        Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+        Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`',
+        NumpadAdd: 'numadd', NumpadSubtract: 'numsub', NumpadMultiply: 'nummult',
+        NumpadDivide: 'numdiv', NumpadDecimal: 'numdec',
+        MediaPlayPause: 'MediaPlayPause', MediaStop: 'MediaStop',
+        MediaTrackNext: 'MediaNextTrack', MediaTrackPrevious: 'MediaPreviousTrack',
+        AudioVolumeUp: 'VolumeUp', AudioVolumeDown: 'VolumeDown', AudioVolumeMute: 'VolumeMute'
+    };
+    for (let i = 0; i <= 9; i++) map[`Digit${i}`] = String(i);
+    for (let i = 0; i <= 9; i++) map[`Numpad${i}`] = `num${i}`;
+    for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') map[`Key${letter}`] = letter;
+    for (let i = 1; i <= 24; i++) map[`F${i}`] = `F${i}`;
+    return map;
+})();
+
+const SHORTCUT_IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '');
+const SHORTCUT_MODIFIER_ORDER = ['CommandOrControl', 'Control', 'Cmd', 'Alt', 'Shift', 'Super'];
+
+function shortcutModifierLabel(code) {
+    if (code === 'ControlLeft' || code === 'ControlRight') return SHORTCUT_IS_MAC ? 'Control' : 'CommandOrControl';
+    if (code === 'AltLeft' || code === 'AltRight') return 'Alt';
+    if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
+    if (code === 'MetaLeft' || code === 'MetaRight') return SHORTCUT_IS_MAC ? 'Cmd' : 'Super';
+    return null;
+}
+
+/** Monta um accelerator no formato do Electron a partir dos `event.code` pressionados juntos. */
+function buildAcceleratorFromCodes(codes) {
+    const modifiers = [];
+    let mainKey = null;
+
+    for (const code of codes) {
+        if (SHORTCUT_MODIFIER_CODES.has(code)) {
+            const modLabel = shortcutModifierLabel(code);
+            if (modLabel && !modifiers.includes(modLabel)) modifiers.push(modLabel);
+        } else {
+            const name = SHORTCUT_KEY_NAME_MAP[code];
+            if (name) mainKey = name; // último não-modificador pressionado vira a tecla principal
+        }
+    }
+
+    modifiers.sort((a, b) => SHORTCUT_MODIFIER_ORDER.indexOf(a) - SHORTCUT_MODIFIER_ORDER.indexOf(b));
+
+    if (!mainKey) return null; // só modificador pressionado não forma atalho válido
+    return [...modifiers, mainKey].join('+');
+}
+
+function humanizeAccelerator(accel) {
+    if (!accel) return 'Nenhum';
+    return accel
+        .replace('CommandOrControl', 'Ctrl')
+        .replace('Super', 'Win')
+        .split('+')
+        .join(' + ');
+}
+
+function useOutsideClick(ref, onOutside, active) {
+    useEffect(() => {
+        if (!active) return undefined;
+
+        function handlePointerDown(event) {
+            if (ref.current && !ref.current.contains(event.target)) onOutside();
+        }
+
+        document.addEventListener('mousedown', handlePointerDown, true);
+        return () => document.removeEventListener('mousedown', handlePointerDown, true);
+    }, [active, onOutside, ref]);
+}
+
+/**
+ * Menu que abre com o botão direito em cima de um botão de ação do toolbar
+ * (mutar/ensurdecer) para gravar um atalho de teclado global novo.
+ */
+function ShortcutRecorderMenu({ action, label, onClose }) {
+    const [phase, setPhase] = useState('menu'); // 'menu' | 'recording' | 'saving' | 'error'
+    const [currentAccel, setCurrentAccel] = useState('');
+    const [liveAccel, setLiveAccel] = useState('');
+    const [errorMsg, setErrorMsg] = useState('');
+    const heldCodes = useRef(new Set());
+    const menuRef = useRef(null);
+
+    useOutsideClick(menuRef, onClose, true);
+
+    useEffect(() => {
+        let cancelled = false;
+        window.discordVoice.getShortcuts?.().then((all) => {
+            if (!cancelled) setCurrentAccel(all?.[action] || '');
+        });
+        return () => { cancelled = true; };
+    }, [action]);
+
+    useEffect(() => {
+        if (phase !== 'recording') return undefined;
+
+        function onKeyDown(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (event.code === 'Escape' && heldCodes.current.size === 0) {
+                window.discordVoice.resumeShortcuts?.();
+                setPhase('menu');
+                return;
+            }
+
+            heldCodes.current.add(event.code);
+            setLiveAccel(buildAcceleratorFromCodes(heldCodes.current) || '');
+        }
+
+        async function onKeyUp(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const accelerator = buildAcceleratorFromCodes(heldCodes.current);
+            window.removeEventListener('keydown', onKeyDown, true);
+            window.removeEventListener('keyup', onKeyUp, true);
+
+            if (!accelerator) {
+                // Só um modificador foi pressionado e solto: não é um atalho válido.
+                await window.discordVoice.resumeShortcuts?.();
+                setPhase('menu');
+                return;
+            }
+
+            setPhase('saving');
+
+            let result;
+            try {
+                result = await window.discordVoice.setShortcut(action, accelerator);
+            } catch (err) {
+                result = { ok: false, error: err?.message || 'Erro desconhecido.' };
+            }
+
+            await window.discordVoice.resumeShortcuts?.();
+
+            if (result?.ok) {
+                setCurrentAccel(accelerator);
+                setPhase('menu');
+                setTimeout(onClose, 700);
+            } else {
+                setErrorMsg(result?.error || 'Não foi possível registrar esse atalho.');
+                setPhase('error');
+            }
+        }
+
+        window.addEventListener('keydown', onKeyDown, true);
+        window.addEventListener('keyup', onKeyUp, true);
+
+        return () => {
+            window.removeEventListener('keydown', onKeyDown, true);
+            window.removeEventListener('keyup', onKeyUp, true);
+        };
+    }, [phase, action, onClose]);
+
+    const startRecording = async () => {
+        heldCodes.current = new Set();
+        setLiveAccel('');
+        setErrorMsg('');
+        await window.discordVoice.suspendShortcuts?.();
+        setPhase('recording');
+    };
+
+    const clearShortcut = async () => {
+        setPhase('saving');
+        const result = await window.discordVoice.setShortcut(action, '');
+        if (result?.ok) {
+            setCurrentAccel('');
+            setPhase('menu');
+        } else {
+            setErrorMsg(result?.error || 'Não foi possível remover o atalho.');
+            setPhase('error');
+        }
+    };
+
+    return (
+        <div
+            className="shortcut-recorder-menu"
+            ref={menuRef}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+        >
+            <div className="shortcut-recorder-title">{label}</div>
+
+            {phase === 'menu' ? (
+                <>
+                    <div className="shortcut-recorder-current">
+                        Atalho atual: <b>{humanizeAccelerator(currentAccel)}</b>
+                    </div>
+                    <button type="button" className="shortcut-recorder-btn" onClick={startRecording}>
+                        Gravar novo atalho
+                    </button>
+                    <button type="button" className="shortcut-recorder-btn shortcut-recorder-btn-danger" onClick={clearShortcut}>
+                        Remover atalho
+                    </button>
+                </>
+            ) : null}
+
+            {phase === 'recording' ? (
+                <>
+                    <div className="shortcut-recorder-recording">Pressione a combinação desejada…</div>
+                    <div className="shortcut-recorder-live">{liveAccel ? humanizeAccelerator(liveAccel) : '…'}</div>
+                    <div className="shortcut-recorder-hint">Solte as teclas para confirmar • Esc cancela</div>
+                </>
+            ) : null}
+
+            {phase === 'saving' ? (
+                <div className="shortcut-recorder-saving">Salvando…</div>
+            ) : null}
+
+            {phase === 'error' ? (
+                <>
+                    <div className="shortcut-recorder-error">{errorMsg}</div>
+                    <button type="button" className="shortcut-recorder-btn" onClick={startRecording}>
+                        Tentar novamente
+                    </button>
+                </>
+            ) : null}
+        </div>
+    );
+}
+
 function initialFor(text) {
     return String(text || '?').trim().slice(0, 1).toUpperCase() || '?';
 }
@@ -1449,8 +1687,12 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
     );
 }
 
-function ToolbarIconButton({ icon, label, onClick, active = false, danger = false, disabled = false, placeholder = false, className = '' }) {
+function ToolbarIconButton({
+    icon, label, onClick, active = false, danger = false, disabled = false,
+    placeholder = false, className = '', shortcutAction = null, shortcutLabel = null
+}) {
     const buttonRef = useRef(null);
+    const [shortcutMenuOpen, setShortcutMenuOpen] = useState(false);
 
     useEffect(() => {
         if (!buttonRef.current) return undefined;
@@ -1467,23 +1709,41 @@ function ToolbarIconButton({ icon, label, onClick, active = false, danger = fals
         return () => instance.destroy();
     }, [label]);
 
+    const handleContextMenu = (event) => {
+        if (!shortcutAction) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setShortcutMenuOpen(true);
+    };
+
     return (
-        <button
-            ref={buttonRef}
-            type="button"
-            className={[
-                'toolbar-icon-button',
-                className,
-                active ? 'is-active' : '',
-                danger ? 'is-danger' : '',
-                placeholder ? 'is-placeholder' : ''
-            ].filter(Boolean).join(' ')}
-            aria-label={label}
-            disabled={disabled}
-            onClick={onClick}
-        >
-            {icon}
-        </button>
+        <span className="toolbar-icon-button-wrapper">
+            <button
+                ref={buttonRef}
+                type="button"
+                className={[
+                    'toolbar-icon-button',
+                    className,
+                    active ? 'is-active' : '',
+                    danger ? 'is-danger' : '',
+                    placeholder ? 'is-placeholder' : ''
+                ].filter(Boolean).join(' ')}
+                aria-label={label}
+                disabled={disabled}
+                onClick={onClick}
+                onContextMenu={handleContextMenu}
+            >
+                {icon}
+            </button>
+
+            {shortcutMenuOpen && shortcutAction ? (
+                <ShortcutRecorderMenu
+                    action={shortcutAction}
+                    label={shortcutLabel || label}
+                    onClose={() => setShortcutMenuOpen(false)}
+                />
+            ) : null}
+        </span>
     );
 }
 
@@ -1519,6 +1779,8 @@ function ActionToolbar({
                 }
                 active={activeCalls.allMuted}
                 onClick={() => window.discordVoice.toggleAllMute()}
+                shortcutAction="toggleMute"
+                shortcutLabel="Mutar / Desmutar (todas as calls)"
             />
 
             <ToolbarIconButton
@@ -1539,6 +1801,8 @@ function ActionToolbar({
                 }
                 active={activeCalls.allDeafened}
                 onClick={() => window.discordVoice.toggleAllDeafen()}
+                shortcutAction="toggleDeafen"
+                shortcutLabel="Ensurdecer / Escutar (todas as calls)"
             />
 
             <ToolbarIconButton

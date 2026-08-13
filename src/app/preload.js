@@ -36,6 +36,24 @@ contextBridge.exposeInMainWorld('discordVoice', {
     toggleAllDeafen() {
         return ipcRenderer.invoke('voice:set-all-deafen');
     },
+    getShortcuts() {
+        return ipcRenderer.invoke('shortcuts:get');
+    },
+    setShortcut(action, accelerator) {
+        return ipcRenderer.invoke('shortcuts:set', { action, accelerator });
+    },
+    resetShortcuts() {
+        return ipcRenderer.invoke('shortcuts:reset');
+    },
+    suspendShortcuts() {
+        return ipcRenderer.invoke('shortcuts:suspend');
+    },
+    resumeShortcuts() {
+        return ipcRenderer.invoke('shortcuts:resume');
+    },
+    onShortcuts(callback) {
+        return subscribe('voice:shortcuts', callback);
+    },
     onDefaults(callback) {
         return subscribe('voice:defaults', callback);
     },

@@ -734,6 +734,94 @@ input:disabled {
     flex: 0 0 1px;
 }
 
+/* ===== MENU DE GRAVAÇÃO DE ATALHO (botão direito no toolbar) ===== */
+.toolbar-icon-button-wrapper {
+    position: relative;
+    display: inline-flex;
+}
+
+.shortcut-recorder-menu {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0px;
+    /* transform: translateX(-50%); */
+    z-index: 50;
+    min-width: 220px;
+    background: #2b2d31;
+    color: #f2f3f5;
+    border: 1px solid #1e1f22;
+    border-radius: 8px;
+    padding: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+    cursor: default;
+}
+
+.shortcut-recorder-title {
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: #b5bac1;
+    margin-bottom: 6px;
+}
+
+.shortcut-recorder-current {
+    color: #dbdee1;
+    margin-bottom: 8px;
+}
+
+.shortcut-recorder-btn {
+    display: block;
+    width: 100%;
+    background: #4e5058;
+    color: #f2f3f5;
+    border: 0;
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-top: 4px;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.shortcut-recorder-btn:hover {
+    background: #5865f2;
+}
+
+.shortcut-recorder-btn-danger:hover {
+    background: #da373c;
+}
+
+.shortcut-recorder-recording {
+    color: #f0b132;
+    margin-bottom: 6px;
+}
+
+.shortcut-recorder-live {
+    background: #1e1f22;
+    border-radius: 4px;
+    padding: 8px;
+    min-height: 18px;
+    text-align: center;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.shortcut-recorder-hint {
+    color: #949ba4;
+    font-size: 11px;
+}
+
+.shortcut-recorder-saving {
+    color: #b5bac1;
+}
+
+.shortcut-recorder-error {
+    color: #f23f42;
+    margin-bottom: 6px;
+}
+
 /* ===== BALÃO DE TOOLTIP (tippy.js) ===== */
 .tippy-box[data-theme~='discord-voice'] {
     color: #fff;
