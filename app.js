@@ -62,40 +62,106 @@ let shortcutsSuspended = false;
  * Em versões recentes o token costuma estar criptografado e este método pode não encontrar.
  */
 function getDefaultDiscordToken() {
-    const possiblePaths = [
-        path.join(process.env.APPDATA || '', 'discord', 'Local Storage', 'leveldb'),
-        path.join(process.env.APPDATA || '', 'discordcanary', 'Local Storage', 'leveldb'),
-        path.join(process.env.APPDATA || '', 'discordptb', 'Local Storage', 'leveldb'),
+    const clients = [
+        { name: 'discord', path: path.join(process.env.APPDATA || '', 'discord') },
+        { name: 'discordcanary', path: path.join(process.env.APPDATA || '', 'discordcanary') },
+        { name: 'discordptb', path: path.join(process.env.APPDATA || '', 'discordptb') },
     ];
 
-    const tokenRegex = /[\w-]{24}\.[\w-]{6}\.[\w-]{25,110}|mfa\.[\w-]{80,}/g;
-    const found = new Set();
+    const tokenRegexPlain = /[\w-]{24}\.[\w-]{6}\.[\w-]{25,110}|mfa\.[\w-]{80,}/g;
+    const encryptedRegex = /dQw4w9WgXcQ:[^"]+/g;
 
-    for (const dir of possiblePaths) {
-        if (!fs.existsSync(dir)) continue;
+    for (const client of clients) {
+        const localStatePath = path.join(client.path, 'Local State');
+        const leveldbPath = path.join(client.path, 'Local Storage', 'leveldb');
 
+        if (!fs.existsSync(localStatePath) || !fs.existsSync(leveldbPath)) continue;
+
+        // 1. Pega a chave mestra (DPAPI)
+        let masterKey;
+        try {
+            const localState = JSON.parse(fs.readFileSync(localStatePath, 'utf8'));
+            const encryptedKeyB64 = localState?.os_crypt?.encrypted_key;
+            if (!encryptedKeyB64) continue;
+
+            const encryptedKey = Buffer.from(encryptedKeyB64, 'base64').subarray(5); // remove "DPAPI"
+
+            // Usa PowerShell para descriptografar com DPAPI (funciona bem no Win11)
+            const psScript = `
+                Add-Type -AssemblyName System.Security
+                $encrypted = [Convert]::FromBase64String('${encryptedKey.toString('base64')}')
+                $decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, 'CurrentUser')
+                [Convert]::ToBase64String($decrypted)
+            `;
+            const masterKeyB64 = execSync(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, {
+                encoding: 'utf8',
+                windowsHide: true
+            }).trim();
+
+            masterKey = Buffer.from(masterKeyB64, 'base64');
+        } catch (err) {
+            console.error(`[Token] Erro ao pegar master key do ${client.name}:`, err.message);
+            continue;
+        }
+
+        // 2. Procura tokens nos arquivos .ldb / .log
         let files = [];
         try {
-            files = fs.readdirSync(dir).filter(f => f.endsWith('.ldb') || f.endsWith('.log'));
+            files = fs.readdirSync(leveldbPath).filter(f => f.endsWith('.ldb') || f.endsWith('.log'));
         } catch (_) {
             continue;
         }
 
         for (const file of files) {
+            let content;
             try {
-                const content = fs.readFileSync(path.join(dir, file), 'utf8');
-                const matches = content.match(tokenRegex);
-                if (matches) {
-                    matches.forEach(t => found.add(t));
-                }
+                content = fs.readFileSync(path.join(leveldbPath, file), 'utf8');
             } catch (_) {
-                // arquivo bloqueado ou binário
+                continue;
+            }
+
+            // Tokens em texto puro (raro, mas ainda acontece)
+            const plainMatches = content.match(tokenRegexPlain);
+            if (plainMatches) {
+                for (const t of plainMatches) {
+                    if (t.length > 50) return t;
+                }
+            }
+
+            // Tokens criptografados
+            const encryptedMatches = content.match(encryptedRegex);
+            if (!encryptedMatches) continue;
+
+            for (const enc of encryptedMatches) {
+                try {
+                    const encrypted = Buffer.from(enc.split('dQw4w9WgXcQ:')[1], 'base64');
+
+                    // Formato Chrome/Discord: 1 byte versão + 12 bytes nonce + ciphertext + 16 bytes tag
+                    if (encrypted.length < 31) continue;
+
+                    const nonce = encrypted.subarray(3, 15);
+                    const ciphertext = encrypted.subarray(15, encrypted.length - 16);
+                    const tag = encrypted.subarray(encrypted.length - 16);
+
+                    const decipher = crypto.createDecipheriv('aes-256-gcm', masterKey, nonce);
+                    decipher.setAuthTag(tag);
+
+                    const decrypted = Buffer.concat([
+                        decipher.update(ciphertext),
+                        decipher.final()
+                    ]).toString('utf8');
+
+                    if (decrypted && decrypted.length > 50) {
+                        return decrypted;
+                    }
+                } catch (_) {
+                    // token inválido ou corrompido, tenta o próximo
+                }
             }
         }
     }
 
-    // Retorna o primeiro token encontrado (ou null)
-    return found.size > 0 ? [...found][0] : null;
+    return null;
 }
 
 let defaultToken = ARG_TOKEN || getDefaultDiscordToken() || '';
