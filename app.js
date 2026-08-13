@@ -55,6 +55,51 @@ let shortcuts = { ...DEFAULT_SHORTCUTS };
 /** true enquanto a UI está gravando um atalho novo (ver shortcuts:suspend) */
 let shortcutsSuspended = false;
 
+/**
+ * Tenta extrair o token do Discord oficial instalado no Windows.
+ * Procura nos arquivos LevelDB (versão estável, Canary e PTB).
+ * Funciona melhor quando o token ainda está em texto puro.
+ * Em versões recentes o token costuma estar criptografado e este método pode não encontrar.
+ */
+function getDefaultDiscordToken() {
+    const possiblePaths = [
+        path.join(process.env.APPDATA || '', 'discord', 'Local Storage', 'leveldb'),
+        path.join(process.env.APPDATA || '', 'discordcanary', 'Local Storage', 'leveldb'),
+        path.join(process.env.APPDATA || '', 'discordptb', 'Local Storage', 'leveldb'),
+    ];
+
+    const tokenRegex = /[\w-]{24}\.[\w-]{6}\.[\w-]{25,110}|mfa\.[\w-]{80,}/g;
+    const found = new Set();
+
+    for (const dir of possiblePaths) {
+        if (!fs.existsSync(dir)) continue;
+
+        let files = [];
+        try {
+            files = fs.readdirSync(dir).filter(f => f.endsWith('.ldb') || f.endsWith('.log'));
+        } catch (_) {
+            continue;
+        }
+
+        for (const file of files) {
+            try {
+                const content = fs.readFileSync(path.join(dir, file), 'utf8');
+                const matches = content.match(tokenRegex);
+                if (matches) {
+                    matches.forEach(t => found.add(t));
+                }
+            } catch (_) {
+                // arquivo bloqueado ou binário
+            }
+        }
+    }
+
+    // Retorna o primeiro token encontrado (ou null)
+    return found.size > 0 ? [...found][0] : null;
+}
+
+let defaultToken = ARG_TOKEN || getDefaultDiscordToken() || '';
+
 function loadShortcuts() {
     try {
         const raw = fs.readFileSync(SHORTCUTS_CONFIG_PATH, 'utf8');
@@ -873,7 +918,7 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, 'src', 'dist', 'index.html'));
 
     mainWindow.webContents.once('did-finish-load', () => {
-        sendToRenderer('voice:defaults', { token: ARG_TOKEN || '' });
+        sendToRenderer('voice:defaults', { token: defaultToken || '' });
         sendToRenderer('voice:shortcuts', { ...shortcuts });
         publishActiveCalls();
     });
