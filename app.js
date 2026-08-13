@@ -20,6 +20,7 @@ let activeToken = null;
 let allMuted = false;
 let allDeafened = false;
 let noiseSuppressionEnabled = true;
+let streamAdvancedControlsEnabled = false;
 
 /** ID do microfone escolhido na UI (null = padrão do sistema) */
 let selectedMicId = null;
@@ -128,7 +129,7 @@ function streamWindowKey(guildId, channelId, userId) {
     return `guild:${guildId}:${channelId}:${userId}`;
 }
 
-function createStreamWindow(streamKey, userId) {
+function createStreamWindow(streamKey, userId, displayName = 'Transmissão') {
     const existing = streamWindows.get(streamKey);
     if (existing && !existing.isDestroyed()) {
         existing.focus();
@@ -154,7 +155,7 @@ function createStreamWindow(streamKey, userId) {
 
     win.loadFile(
         path.join(__dirname, 'src', 'app', 'stream.html'),
-        { query: { streamKey, userId: String(userId || '') } }
+        { query: { streamKey, userId: String(userId || ''), displayName: String(displayName || 'Transmissão'), advancedControls: streamAdvancedControlsEnabled ? '1' : '0' } }
     );
 
     win.on('closed', () => {
@@ -936,7 +937,16 @@ ipcMain.handle('voice:load-servers', async (_event, { token }) => {
     browserClient.connect();
 });
 
-ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId }) => {
+ipcMain.handle('voice:set-stream-advanced-controls', async (_event, { enabled } = {}) => {
+    streamAdvancedControlsEnabled = Boolean(enabled);
+    for (const win of streamWindows.values()) {
+        if (!win || win.isDestroyed()) continue;
+        win.webContents.send('stream:controls-setting', streamAdvancedControlsEnabled);
+    }
+    return { ok: true, enabled: streamAdvancedControlsEnabled };
+});
+
+ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId, displayName }) => {
     const entry = voiceClients.get(String(guildId));
     if (!entry?.client || entry.status !== 'connected') {
         return { ok: false, error: 'Você precisa estar conectado à call.' };
@@ -949,7 +959,7 @@ ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId
     // Mantém o campo legado apenas como referência à última stream aberta;
     // ele não controla mais qual viewer fica ativo.
     entry.streamKey = streamKey;
-    const streamWindow = createStreamWindow(streamKey, userId);
+    const streamWindow = createStreamWindow(streamKey, userId, displayName);
 
     const startWatching = () => {
         if (!entry.streamKeys?.has(streamKey)) return;

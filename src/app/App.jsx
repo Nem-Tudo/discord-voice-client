@@ -685,6 +685,15 @@ function App() {
     const [currentUser, setCurrentUser] = useState(null);
     const [activeCalls, setActiveCalls] = useState(emptyActiveCalls);
 
+    const [streamAdvancedControlsEnabled, setStreamAdvancedControlsEnabled] = useState(() => {
+        const saved = localStorage.getItem('streamAdvancedControlsEnabled');
+        return saved === 'true';
+    });
+
+    useEffect(() => {
+        window.discordVoice.setStreamAdvancedControls?.(streamAdvancedControlsEnabled);
+    }, [streamAdvancedControlsEnabled]);
+
     const [speakingPriorityEnabled, setSpeakingPriorityEnabled] = useState(() => {
         const saved = localStorage.getItem('speakingPriorityEnabled');
         return saved === null ? true : saved === 'true';
@@ -1067,6 +1076,13 @@ function App() {
                 activeCalls={activeCalls}
                 speakingPriorityEnabled={speakingPriorityEnabled}
                 onToggleSpeakingPriority={toggleSpeakingPriority}
+                streamAdvancedControlsEnabled={streamAdvancedControlsEnabled}
+                onToggleStreamAdvancedControls={async () => {
+                    const next = !streamAdvancedControlsEnabled;
+                    setStreamAdvancedControlsEnabled(next);
+                    localStorage.setItem('streamAdvancedControlsEnabled', String(next));
+                    await window.discordVoice.setStreamAdvancedControls?.(next);
+                }}
             />
         </main>
     );
@@ -1546,7 +1562,7 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
         });
     };
 
-    const watchStream = async (userId) => {
+    const watchStream = async (userId, displayName = 'Transmissão') => {
         if (!connected) {
             alert('Entre nesta call para assistir à transmissão.');
             return;
@@ -1555,7 +1571,8 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
         const result = await window.discordVoice.watchStream?.({
             guildId: guild.id,
             channelId: channel.id,
-            userId: String(userId)
+            userId: String(userId),
+            displayName: String(displayName || 'Transmissão')
         });
 
         if (result?.ok === false) {
@@ -1680,7 +1697,7 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
                                 {state.self_stream ? (
                                     <StreamBadge
                                         disabled={!connected}
-                                        onClick={() => watchStream(state.user_id)}
+                                        onClick={() => watchStream(state.user_id, name)}
                                     />
                                 ) : null}
 
@@ -1787,7 +1804,9 @@ function NoiseSuppressionIcon() {
 function ActionToolbar({
     activeCalls,
     speakingPriorityEnabled,
-    onToggleSpeakingPriority
+    onToggleSpeakingPriority,
+    streamAdvancedControlsEnabled,
+    onToggleStreamAdvancedControls
 }) {
     const hasActiveCalls = activeCalls.calls.length > 0;
     const noop = () => { };
@@ -1917,6 +1936,18 @@ function ActionToolbar({
                         : 'speaking-priority-inactive'
                 }
                 onClick={onToggleSpeakingPriority}
+            />
+
+            <ToolbarIconButton
+                icon={<ScreenShareIcon />}
+                label={streamAdvancedControlsEnabled
+                    ? 'Desativar controles avançados de stream'
+                    : 'Ativar controles avançados de stream'}
+                active={streamAdvancedControlsEnabled}
+                className={streamAdvancedControlsEnabled
+                    ? 'noise-suppression-active'
+                    : 'noise-suppression-inactive'}
+                onClick={onToggleStreamAdvancedControls}
             />
         </section>
     );

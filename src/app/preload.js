@@ -93,7 +93,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     stopMicTest: () => ipcRenderer.invoke('voice:stop-mic-test'),
     openDiscordUser: (userId) => ipcRenderer.invoke('open-discord-user', userId),
     watchStream: (data) => ipcRenderer.invoke('voice:watch-stream', data),
+    setStreamAdvancedControls: (enabled) => ipcRenderer.invoke('voice:set-stream-advanced-controls', { enabled }),
     stopWatchStream: (streamKey) => ipcRenderer.invoke('voice:stop-watch-stream', { streamKey }),
     onStreamVideoFrame: (callback) => subscribe('stream:video-frame', callback),
-    onStreamStatus: (callback) => subscribe('stream:status', callback)
+    onStreamStatus: (callback) => subscribe('stream:status', callback),
+    onStreamControlsSetting: (callback) => subscribe('stream:controls-setting', callback)
 });
