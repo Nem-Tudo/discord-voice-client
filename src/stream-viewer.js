@@ -374,7 +374,7 @@ function createStreamViewer({
             Math.round(timestampBase + (delta * 1000000 / 90000))
         );
 
-        writeLog(`H264 frame pronto key=${isKey} bytes=${frame.length} codec=${getCodecString(frame)} ssrc=${frameSsrc ?? 'n/a'}`);
+        // writeLog(`H264 frame pronto key=${isKey} bytes=${frame.length} codec=${getCodecString(frame)} ssrc=${frameSsrc ?? 'n/a'}`);
         onFrame?.({
             streamKey: targetStreamKey,
             userId: targetUserId,
@@ -533,7 +533,7 @@ function createStreamViewer({
                     MediaType?.VIDEO ?? 1,
                     reconstructed
                 );
-                writeLog(`DAVE vídeo decrypt ok user=${userId} bytes=${reconstructed.length}->${decrypted?.length ?? 0}`);
+                // writeLog(`DAVE vídeo decrypt ok user=${userId} bytes=${reconstructed.length}->${decrypted?.length ?? 0}`);
 
                 if (decrypted && (Buffer.isBuffer(decrypted) || decrypted instanceof Uint8Array) && decrypted.length) {
                     handleEncodedFrame(Buffer.from(decrypted), timestamp, state.ssrc);

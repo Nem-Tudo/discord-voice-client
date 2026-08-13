@@ -1580,6 +1580,24 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
         }
     };
 
+    const watchCamera = async (userId, displayName = 'Câmera') => {
+        if (!connected) {
+            alert('Entre nesta call para assistir à câmera.');
+            return;
+        }
+
+        const result = await window.discordVoice.watchCamera?.({
+            guildId: guild.id,
+            channelId: channel.id,
+            userId: String(userId),
+            displayName: String(displayName || 'Câmera')
+        });
+
+        if (result?.ok === false) {
+            alert(result.error || 'Não foi possível abrir a câmera.');
+        }
+    };
+
     return (
         <div
             className={[
@@ -1687,8 +1705,21 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
 
                                 {state.self_video ? (
                                     <span
-                                        className="discord-member-media"
-                                        title="Câmera ligada"
+                                        className="discord-member-media discord-member-media-clickable"
+                                        title={connected ? 'Assistir à câmera' : 'Câmera ligada'}
+                                        role="button"
+                                        tabIndex={connected ? 0 : -1}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            if (connected) watchCamera(state.user_id, name);
+                                        }}
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter' || event.key === ' ') {
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                if (connected) watchCamera(state.user_id, name);
+                                            }
+                                        }}
                                     >
                                         <CameraIcon />
                                     </span>

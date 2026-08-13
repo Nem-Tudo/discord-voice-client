@@ -6,6 +6,7 @@ const dgram = require('dgram');
 const { AudioPlayer } = require('./audio-player');
 const { AudioSender } = require('./audio-sender');
 const { createStreamViewer } = require('./stream-viewer');
+const { createCameraVideoReceiver } = require('./video-receiver');
 
 let Davey = null;
 
@@ -41,6 +42,9 @@ const VoiceOp = {
     CLIENTS_CONNECT: 11,
     CLIENT_DISCONNECT: 13,
 
+    VIDEO: 12,
+    MEDIA_SINK_WANTS: 15,
+
     DAVE_PREPARE_TRANSITION: 21,
     DAVE_EXECUTE_TRANSITION: 22,
     DAVE_TRANSITION_READY: 23,
@@ -73,7 +77,9 @@ function createVoiceClient({
     onDisconnected,
     onJoinError,
     onStreamFrame,
-    onStreamStatus
+    onStreamStatus,
+    onCameraFrame,
+    onCameraStatus
 }) {
     let channelId = initialChannelId;
 
@@ -161,6 +167,20 @@ function createVoiceClient({
     let daveProtocolVersion = 0;
 
     const davePendingTransitions = new Map();
+
+    const cameraReceiver = createCameraVideoReceiver({
+        log,
+        onFrame: (frame) => onCameraFrame?.(frame),
+        onStatus: (status) => onCameraStatus?.(status),
+        getDaveSession: () => daveSession,
+        getProtocolVersion: () => daveProtocolVersion,
+        getSecretKey: () => voiceSecretKey,
+        getEncryptionMode: () => voiceEncryptionMode,
+        getUdpSocket: () => udpSocket,
+        getRemoteIp: () => voiceIp,
+        getRemotePort: () => voicePort,
+        getUserId: () => botUserId
+    });
 
     /*
      * Usuários que já foram conhecidos pelo cliente.
@@ -802,6 +822,10 @@ function createVoiceClient({
                         session_id: voiceSessionId,
                         token: voiceServerToken,
 
+                        // A câmera usa o RTP da conexão de voz principal.
+                        // Sem video:true o Voice Gateway trata este cliente
+                        // como áudio-only e não entrega os SSRCs de vídeo.
+                        video: true,
                         max_dave_protocol_version:
                             MAX_DAVE_VERSION
                     }
@@ -833,6 +857,32 @@ function createVoiceClient({
                 break;
             }
 
+
+            // ----------------------------------------------------
+            // VIDEO / CAMERA
+            // ----------------------------------------------------
+
+            case VoiceOp.VIDEO: {
+                const videoUserId = d?.user_id ? String(d.user_id) : '';
+                log(`[Camera] VIDEO recebido do gateway: user=${videoUserId || '-'} streams=${Array.isArray(d?.streams) ? d.streams.length : 0}`);
+                if (videoUserId) {
+                    // Camera-only participants may not have a SPEAKING event.
+                    // Keep the sender identity visible to the DAVE negotiation
+                    // and make the timing explicit in the logs.
+                    recognizedUserIds.add(videoUserId);
+                    log(`[DAVE] sender de vídeo reconhecido: ${videoUserId}`);
+                }
+                cameraReceiver.updateVideoState(d);
+
+                if (d?.user_id && cameraReceiver.isWatching?.(d.user_id)) {
+                    const wants = cameraReceiver.getWants?.(d.user_id);
+                    if (wants) {
+                        log(`[Camera] enviando MEDIA_SINK_WANTS: ${JSON.stringify(wants)}`);
+                        sendVoice(VoiceOp.MEDIA_SINK_WANTS, wants);
+                    }
+                }
+                break;
+            }
 
             // ----------------------------------------------------
             // SPEAKING
@@ -930,6 +980,12 @@ function createVoiceClient({
                  */
                 reinitDaveSession();
 
+                // Não enviamos VIDEO aqui. O opcode 12 anuncia/atualiza
+                // o vídeo que ESTE cliente está publicando; ele não é um
+                // subscribe de câmera remota. Enviar video_ssrc=0/streams=[]
+                // ao entrar na call pode substituir o estado de mídia do
+                // cliente no Voice Gateway e, em algumas sessões, derrubar
+                // o transporte de áudio quando abrimos uma câmera remota.
                 sessionEstablished = true;
 
                 /*
@@ -1016,7 +1072,7 @@ function createVoiceClient({
                 }
 
                 log(
-                    `[DAVE] ${ids.length} cliente(s) conectado(s).`
+                    `[DAVE] ${ids.length} cliente(s) conectado(s): ${ids.map(String).join(', ') || 'nenhum'}`
                 );
 
                 break;
@@ -1032,6 +1088,7 @@ function createVoiceClient({
                     const userId = String(d.user_id);
 
                     recognizedUserIds.delete(userId);
+                    cameraReceiver.removeUser(userId);
 
                     for (const [mappedSsrc, mappedUserId] of ssrcMap) {
                         if (mappedUserId === userId) {
@@ -1655,6 +1712,11 @@ function createVoiceClient({
                     voiceSecretKey,
                     voiceEncryptionMode
                 );
+
+                // A mesma sessão UDP também carrega vídeo de câmera.
+                // O receiver filtra por payload type/SSRC, então pacotes
+                // de áudio continuam indo somente para o AudioPlayer.
+                cameraReceiver.processRtp(msg);
             }
         );
 
@@ -1743,7 +1805,26 @@ function createVoiceClient({
                             address,
                             port,
                             mode: voiceEncryptionMode
-                        }
+                        },
+                        codecs: [
+                            {
+                                name: 'opus',
+                                type: 'audio',
+                                priority: 1000,
+                                payload_type: 120,
+                                encode: true,
+                                decode: true
+                            },
+                            {
+                                name: 'H264',
+                                type: 'video',
+                                priority: 1000,
+                                payload_type: 103,
+                                rtx_payload_type: 104,
+                                encode: false,
+                                decode: true
+                            }
+                        ]
                     }
                 );
             }
@@ -1974,6 +2055,7 @@ function createVoiceClient({
         /*
          * Desliga a transmissão assistida, caso exista.
          */
+        cameraReceiver.stop();
         stopAllStreamViewers();
 
         /*
@@ -2071,6 +2153,22 @@ function createVoiceClient({
             const key = String(streamKey || '');
             const viewer = ensureStreamViewer(key);
             viewer.watch(key, userId);
+        },
+
+        watchCamera(userId) {
+            const id = String(userId || '');
+            if (!id) return;
+            log(`[Camera] iniciando câmera de ${id}`);
+            cameraReceiver.watch(id);
+            const wants = cameraReceiver.getWants?.(id);
+            if (wants) {
+                log(`[Camera] enviando subscribe inicial: ${JSON.stringify(wants)}`);
+                sendVoice(VoiceOp.MEDIA_SINK_WANTS, wants);
+            }
+        },
+
+        stopWatchingCamera(userId = null) {
+            cameraReceiver.stop(userId);
         },
 
         stopWatchingStream(streamKey) {

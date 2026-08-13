@@ -1500,3 +1500,5 @@ input:disabled {
 .logs-window-area {
     flex: 1;
 }
+.discord-member-media-clickable { cursor: pointer; }
+.discord-member-media-clickable:hover { opacity: .85; }

@@ -164,6 +164,13 @@ function createStreamWindow(streamKey, userId, displayName = 'Transmissão') {
         // The media session is separate from the voice call, so closing the
         // viewer should stop only this stream subscription.
         const parsed = streamKey.split(':');
+        if (parsed[0] === 'camera' && parsed.length === 4) {
+            const entry = voiceClients.get(parsed[1]);
+            entry?.client?.stopWatchingCamera?.(parsed[3]);
+            entry?.cameraKeys?.delete(streamKey);
+            return;
+        }
+
         if (parsed.length === 4) {
             const entry = voiceClients.get(parsed[1]);
             entry?.client?.stopWatchingStream?.(streamKey);
@@ -649,6 +656,24 @@ function startVoiceCall(guild, channel, {
             if (!streamKey) return;
             sendToStreamWindow(streamKey, 'stream:status', status);
         },
+        onCameraFrame: (frame) => {
+            if (!frame?.userId) return;
+            const streamKey = `camera:${guild.id}:${entry.channelId}:${String(frame.userId)}`;
+            sendToStreamWindow(streamKey, 'stream:video-frame', {
+                codec: frame.codec,
+                key: Boolean(frame.key),
+                timestamp: Number(frame.timestamp || 0),
+                data: Buffer.from(frame.data || [])
+            });
+        },
+        onCameraStatus: (status) => {
+            if (!status?.userId) return;
+            const streamKey = `camera:${guild.id}:${entry.channelId}:${String(status.userId)}`;
+            sendToStreamWindow(streamKey, 'stream:status', {
+                ...status,
+                streamKey
+            });
+        },
         onReady: () => {
             entry.status = 'connected';
             entry.error = null;
@@ -973,6 +998,45 @@ ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId
     }
 
     return { ok: true, streamKey };
+});
+
+ipcMain.handle('voice:watch-camera', async (_event, { guildId, channelId, userId, displayName }) => {
+    const entry = voiceClients.get(String(guildId));
+    if (!entry?.client || entry.status !== 'connected') {
+        return { ok: false, error: 'Você precisa estar conectado à call.' };
+    }
+
+    const streamKey = `camera:${guildId}:${channelId}:${String(userId)}`;
+    if (!entry.cameraKeys) entry.cameraKeys = new Set();
+    entry.cameraKeys.add(streamKey);
+
+    const streamWindow = createStreamWindow(streamKey, userId, displayName || 'Câmera');
+
+    const startWatching = () => {
+        if (!entry.cameraKeys?.has(streamKey)) return;
+        entry.client.watchCamera?.(String(userId));
+    };
+
+    if (streamWindow.webContents.isLoading()) {
+        streamWindow.webContents.once('did-finish-load', startWatching);
+    } else {
+        startWatching();
+    }
+
+    return { ok: true, streamKey };
+});
+
+ipcMain.handle('voice:stop-watch-camera', async (_event, { streamKey }) => {
+    const key = String(streamKey || '');
+    for (const entry of voiceClients.values()) {
+        if (entry.cameraKeys?.has(key)) {
+            entry.client?.stopWatchingCamera?.(key.split(':')[3]);
+            entry.cameraKeys.delete(key);
+        }
+    }
+    const win = streamWindows.get(key);
+    if (win && !win.isDestroyed()) win.close();
+    return { ok: true };
 });
 
 ipcMain.handle('voice:stop-watch-stream', async (_event, { streamKey }) => {
