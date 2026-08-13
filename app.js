@@ -338,6 +338,12 @@ function activeCallsPayload() {
             dmAvatarUrl: entry.dmAvatarUrl || null,
             dmType: entry.dmType ?? null,
 
+            // Outros participantes já conectados a esta call de DM/grupo
+            // (o "eu" não entra aqui — ver `muted`/`deafened` abaixo).
+            // Vazio/undefined para calls de servidor (a UI de servidor usa
+            // guild.voiceStates, que já traz tudo isso).
+            dmMembers: entry.isDm ? { ...(entry.voiceStates || {}) } : undefined,
+
             muted: entry.muted,
             deafened: entry.deafened,
 
@@ -977,6 +983,13 @@ function startDmVoiceCall(dmChannel) {
         inputLevel: 0,
         outputLevel: 0,
 
+        // Estado de voz dos OUTROS participantes da chamada (DM ou grupo).
+        // Chave: user_id (string) -> { selfMute, selfDeaf, selfVideo, selfStream, mute, deaf }.
+        // Alimentado pelos VOICE_STATE_UPDATE recebidos nesta sessão de gateway
+        // dedicada da call (própria conexão criada abaixo). Não inclui o próprio
+        // usuário: o front usa `entry.muted`/`entry.deafened` para o "eu".
+        voiceStates: {},
+
         pending: null,
         externallyDisconnected: false,
         streamKey: null,
@@ -1023,7 +1036,39 @@ function startDmVoiceCall(dmChannel) {
                 } else {
                     voiceClient.disconnect();
                 }
+
+                return;
             }
+
+            // Daqui pra baixo: voice state de outro participante da call
+            // (ou o nosso próprio, com channel_id preenchido — ignorado, pois
+            // o "eu" já é representado por entry.muted/entry.deafened).
+            if (ownUserId && state.user_id === ownUserId) return;
+
+            const userId = String(state.user_id);
+
+            if (state.channel_id === channelId) {
+                // Entrou na call ou atualizou mute/deaf/vídeo/stream.
+                entry.voiceStates[userId] = {
+                    userId,
+                    selfMute: Boolean(state.self_mute),
+                    selfDeaf: Boolean(state.self_deaf),
+                    selfVideo: Boolean(state.self_video),
+                    selfStream: Boolean(state.self_stream),
+                    mute: Boolean(state.mute),
+                    deaf: Boolean(state.deaf)
+                };
+
+                log(`[Voice] ${userId} entrou na call de ${entry.channelName}.`);
+            } else {
+                // Saiu da call (channel_id null ou trocou de canal).
+                if (entry.voiceStates[userId]) {
+                    delete entry.voiceStates[userId];
+                    log(`[Voice] ${userId} saiu da call de ${entry.channelName}.`);
+                }
+            }
+
+            publishActiveCalls();
         },
         onSpeaking: (speaking) => {
             if (voiceClients.get(channelId) !== entry) return;
