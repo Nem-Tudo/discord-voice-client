@@ -165,7 +165,9 @@ function createStreamWindow(streamKey, userId) {
         const parsed = streamKey.split(':');
         if (parsed.length === 4) {
             const entry = voiceClients.get(parsed[1]);
-            entry?.client?.stopWatchingStream?.();
+            entry?.client?.stopWatchingStream?.(streamKey);
+            entry?.streamKeys?.delete(streamKey);
+            if (entry?.streamKey === streamKey) entry.streamKey = entry.streamKeys?.values().next().value || null;
         }
     });
 
@@ -456,6 +458,8 @@ function showVoiceJoinError(guild, channel, message) {
 
         pending: null,
         externallyDisconnected: false,
+        streamKey: null,
+        streamKeys: new Set(),
         client: null
     };
 
@@ -527,6 +531,8 @@ function startVoiceCall(guild, channel, {
 
         pending: null,
         externallyDisconnected: false,
+        streamKey: null,
+        streamKeys: new Set(),
         client: null
     };
 
@@ -938,17 +944,15 @@ ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId
 
     const streamKey = streamWindowKey(guildId, channelId, userId);
 
-    if (entry.streamKey && entry.streamKey !== streamKey) {
-        const oldWindow = streamWindows.get(entry.streamKey);
-        if (oldWindow && !oldWindow.isDestroyed()) oldWindow.close();
-        entry.client.stopWatchingStream?.();
-    }
-
+    if (!entry.streamKeys) entry.streamKeys = new Set();
+    entry.streamKeys.add(streamKey);
+    // Mantém o campo legado apenas como referência à última stream aberta;
+    // ele não controla mais qual viewer fica ativo.
     entry.streamKey = streamKey;
     const streamWindow = createStreamWindow(streamKey, userId);
 
     const startWatching = () => {
-        if (entry.streamKey !== streamKey) return;
+        if (!entry.streamKeys?.has(streamKey)) return;
         entry.client.watchStream?.(streamKey, userId);
     };
 
@@ -962,14 +966,18 @@ ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId
 });
 
 ipcMain.handle('voice:stop-watch-stream', async (_event, { streamKey }) => {
+    const key = String(streamKey || '');
     for (const entry of voiceClients.values()) {
-        if (entry.streamKey === streamKey) {
-            entry.client?.stopWatchingStream?.();
-            entry.streamKey = null;
+        if (entry.streamKeys?.has(key)) {
+            entry.client?.stopWatchingStream?.(key);
+            entry.streamKeys.delete(key);
+            if (entry.streamKey === key) {
+                entry.streamKey = entry.streamKeys.values().next().value || null;
+            }
         }
     }
 
-    const win = streamWindows.get(streamKey);
+    const win = streamWindows.get(key);
     if (win && !win.isDestroyed()) win.close();
 
     return { ok: true };

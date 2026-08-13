@@ -211,12 +211,16 @@ function createVoiceClient({
 
     // A Go Live é uma segunda media session. Ela compartilha o Gateway
     // principal, mas possui seu próprio Voice Gateway + DAVE + UDP.
-    let streamViewer = null;
+    // Cada Go Live é uma media session independente. Mantemos um viewer por
+    // stream_key para permitir múltiplas transmissões simultâneas no mesmo
+    // canal de voz, exatamente como o protocolo de stream do Discord prevê.
+    const streamViewers = new Map();
 
-    const ensureStreamViewer = () => {
-        if (streamViewer) return streamViewer;
+    const ensureStreamViewer = (streamKey = null) => {
+        const key = String(streamKey || '');
+        if (key && streamViewers.has(key)) return streamViewers.get(key);
 
-        streamViewer = createStreamViewer({
+        const viewer = createStreamViewer({
             token,
             guildId,
             channelId,
@@ -235,10 +239,29 @@ function createVoiceClient({
                         ...status
                     });
                 }
+                if (status?.status === 'stopped' && status?.streamKey) {
+                    streamViewers.delete(String(status.streamKey));
+                }
             }
         });
 
-        return streamViewer;
+        if (key) streamViewers.set(key, viewer);
+        return viewer;
+    };
+
+    const stopAllStreamViewers = () => {
+        for (const viewer of streamViewers.values()) {
+            try { viewer.stop(); } catch (_) {}
+        }
+        streamViewers.clear();
+    };
+
+    const stopStreamViewer = (streamKey) => {
+        const key = String(streamKey || '');
+        const viewer = streamViewers.get(key);
+        if (!viewer) return;
+        try { viewer.stop(); } catch (_) {}
+        streamViewers.delete(key);
     };
 
 
@@ -537,7 +560,9 @@ function createVoiceClient({
             case 'STREAM_CREATE':
             case 'STREAM_SERVER_UPDATE':
             case 'STREAM_DELETE': {
-                streamViewer?.handleGatewayEvent(type, d);
+                const streamKey = String(d?.stream_key || '');
+                const viewer = streamViewers.get(streamKey);
+                if (viewer) viewer.handleGatewayEvent(type, d);
                 break;
             }
 
@@ -1949,8 +1974,7 @@ function createVoiceClient({
         /*
          * Desliga a transmissão assistida, caso exista.
          */
-        try { streamViewer?.stop({ sendDelete: false }); } catch (_) {}
-        streamViewer = null;
+        stopAllStreamViewers();
 
         /*
          * Desliga áudio.
@@ -2044,12 +2068,17 @@ function createVoiceClient({
         },
 
         watchStream(streamKey, userId) {
-            const viewer = ensureStreamViewer();
-            viewer.watch(streamKey, userId);
+            const key = String(streamKey || '');
+            const viewer = ensureStreamViewer(key);
+            viewer.watch(key, userId);
         },
 
-        stopWatchingStream() {
-            streamViewer?.stop();
+        stopWatchingStream(streamKey) {
+            if (streamKey) {
+                stopStreamViewer(streamKey);
+            } else {
+                stopAllStreamViewers();
+            }
         },
 
         disconnect() {
