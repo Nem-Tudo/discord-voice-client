@@ -385,6 +385,83 @@ input:disabled {
     font-weight: 700;
 }
 
+/* ===== SWITCH SERVIDORES / DMS ===== */
+.servers-mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 3px;
+    background: #2b2d31;
+    border-radius: 6px;
+    flex: 0 0 auto;
+}
+
+.servers-mode-tab {
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #b5bac1;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+}
+
+.servers-mode-tab:hover {
+    color: #f2f3f5;
+}
+
+.servers-mode-tab.active {
+    color: #fff;
+    background: #5865f2;
+}
+
+/* ===== LINHA DE DM (mensagens diretas) ===== */
+.dm-row.connected .server-name {
+    color: #23a55a;
+}
+
+.dm-row.call-error .server-name {
+    color: #f23f42;
+}
+
+.dm-row-error {
+    color: #f23f42;
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.dm-call-button,
+.dm-hangup-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 32px;
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.dm-call-button {
+    background: #23a55a;
+}
+
+.dm-call-button:hover {
+    background: #1f9153;
+}
+
+.dm-hangup-button {
+    background: #da373c;
+}
+
 .channel-heading {
     margin: 0 0 2px;
     overflow: hidden;

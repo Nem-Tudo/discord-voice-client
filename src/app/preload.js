@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     joinCall(data) {
         return ipcRenderer.invoke('voice:join-call', data);
     },
+    joinDmCall(channel) {
+        return ipcRenderer.invoke('voice:join-dm-call', { channel });
+    },
     leaveCall(guildId) {
         return ipcRenderer.invoke('voice:leave-call', { guildId });
     },

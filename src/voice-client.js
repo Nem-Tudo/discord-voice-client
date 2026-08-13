@@ -484,7 +484,7 @@ function createVoiceClient({
                     onGatewayReady(d);
                 }
 
-                if (guildId && channelId) {
+                if (channelId) {
                     joinVoiceChannel();
                 }
 
@@ -495,8 +495,7 @@ function createVoiceClient({
             case 'VOICE_STATE_UPDATE': {
 
                 const isOwnVoiceState =
-                    guildId &&
-                    String(d.guild_id) === String(guildId) &&
+                    (guildId ? String(d.guild_id) === String(guildId) : !d.guild_id) &&
                     d.user_id === botUserId;
 
                 if (isOwnVoiceState) {
@@ -558,14 +557,19 @@ function createVoiceClient({
 
 
             case 'VOICE_SERVER_UPDATE': {
-                if (!guildId || !channelId) {
+                if (!channelId) {
                     break;
                 }
 
-                // O VOICE_SERVER_UPDATE também pertence a uma guild.
-                // Ignorar eventos de outras guilds é necessário para
-                // manter múltiplas calls simultaneamente.
-                if (String(d.guild_id) !== String(guildId)) {
+                // O VOICE_SERVER_UPDATE também pertence a uma guild (ou a
+                // nenhuma, no caso de call em DM/grupo). Ignorar eventos de
+                // outra origem é necessário para manter múltiplas calls
+                // simultâneas.
+                const serverMatches = guildId
+                    ? String(d.guild_id) === String(guildId)
+                    : !d.guild_id;
+
+                if (!serverMatches) {
                     break;
                 }
 
@@ -817,7 +821,7 @@ function createVoiceClient({
                 sendVoice(
                     VoiceOp.IDENTIFY,
                     {
-                        server_id: guildId,
+                        server_id: guildId || channelId,
                         user_id: botUserId,
                         session_id: voiceSessionId,
                         token: voiceServerToken,
@@ -2194,19 +2198,18 @@ function createVoiceClient({
 
 
             /*
-             * Remove o bot do canal.
+             * Remove o bot do canal (funciona tanto para guild quanto
+             * para DM/grupo, onde guild_id é null).
              */
-            if (guildId) {
-                sendGateway(
-                    4,
-                    {
-                        guild_id: guildId,
-                        channel_id: null,
-                        self_mute: false,
-                        self_deaf: false
-                    }
-                );
-            }
+            sendGateway(
+                4,
+                {
+                    guild_id: guildId,
+                    channel_id: null,
+                    self_mute: false,
+                    self_deaf: false
+                }
+            );
 
 
             setTimeout(

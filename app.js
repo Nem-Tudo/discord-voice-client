@@ -322,11 +322,21 @@ function activeCallsPayload() {
         calls: Array.from(
             voiceClients.values()
         ).map((entry) => ({
+            // Identificador único para ações da UI (sair/mutar/ensurdecer):
+            // guildId para calls de servidor, channelId para calls de DM.
+            id: entry.guildId || entry.channelId,
+
+            isDm: Boolean(entry.isDm),
+
             guildId: entry.guildId,
             guildName: entry.guildName,
 
             channelId: entry.channelId,
             channelName: entry.channelName,
+
+            dmName: entry.dmName || null,
+            dmAvatarUrl: entry.dmAvatarUrl || null,
+            dmType: entry.dmType ?? null,
 
             muted: entry.muted,
             deafened: entry.deafened,
@@ -931,6 +941,209 @@ function startVoiceCall(guild, channel, {
     if (entry.deafened) voiceClient.setDeafen(true);
 }
 
+/**
+ * Inicia uma call de voz em uma DM ou grupo de DM. Diferente de
+ * startVoiceCall(), não há guild_id (o Discord usa guild_id: null pra
+ * chamadas privadas), nem verificação de permissão/lotação, nem
+ * transmissão de tela/câmera — só o áudio, como pedido.
+ */
+function startDmVoiceCall(dmChannel) {
+    if (!activeToken) {
+        log('Carregue os servidores antes de entrar em uma call.');
+        return;
+    }
+
+    const channelId = dmChannel.id;
+    const displayName = dmChannel.name || 'Chamada de voz';
+
+    const entry = {
+        guildId: null,
+        guildName: null,
+
+        isDm: true,
+        dmName: displayName,
+        dmAvatarUrl: dmChannel.avatarUrl || null,
+        dmType: dmChannel.type,
+
+        channelId,
+        channelName: displayName,
+
+        muted: allMuted,
+        deafened: allDeafened,
+
+        status: 'connecting',
+        error: null,
+
+        inputLevel: 0,
+        outputLevel: 0,
+
+        pending: null,
+        externallyDisconnected: false,
+        streamKey: null,
+        streamKeys: new Set(),
+        client: null
+    };
+
+    const voiceClient = createVoiceClient({
+        token: activeToken,
+        guildId: null,
+        channelId,
+        deviceId: selectedMicId,
+        gainPercent: selectedMicGain,
+        onLog: log,
+        onVoiceStateUpdate: (state) => {
+            if (voiceClients.get(channelId) !== entry) return;
+
+            // Só nos interessam updates de chamada privada (guild_id null).
+            if (state.guild_id) return;
+
+            const ownUserId =
+                typeof voiceClient.getUserId === 'function'
+                    ? voiceClient.getUserId()
+                    : null;
+
+            if (ownUserId && state.user_id === ownUserId && !state.channel_id) {
+                // Alguém encerrou a chamada, ou o Discord recusou a entrada.
+                entry.pending = null;
+                entry.externallyDisconnected = true;
+                entry.status = 'disconnected';
+                entry.error = null;
+
+                log(`[Voice] Você foi desconectado da call em ${entry.channelName} externamente.`);
+
+                if (voiceClients.get(channelId) === entry) {
+                    voiceClients.delete(channelId);
+                }
+
+                publishActiveCalls();
+                sendToRenderer('voice:status', 'Você foi desconectado da call por outro usuário.');
+
+                if (typeof voiceClient.forceDisconnect === 'function') {
+                    voiceClient.forceDisconnect('desconectado externamente');
+                } else {
+                    voiceClient.disconnect();
+                }
+            }
+        },
+        onSpeaking: (speaking) => {
+            if (voiceClients.get(channelId) !== entry) return;
+            if (!speaking?.user_id) return;
+
+            sendToRenderer('voice:speaking', {
+                guild_id: null,
+                channel_id: channelId,
+                user_id: String(speaking.user_id),
+                speaking: Boolean(speaking.speaking)
+            });
+        },
+        onAudioLevel: ({ direction, level }) => {
+            if (voiceClients.get(channelId) !== entry) return;
+
+            const value = Math.max(0, Math.min(1, Number(level) || 0));
+            if (direction === 'input') entry.inputLevel = value;
+            if (direction === 'output') entry.outputLevel = value;
+
+            const now = Date.now();
+            if (!entry._lastAudioPublish || now - entry._lastAudioPublish >= 50) {
+                entry._lastAudioPublish = now;
+                publishActiveCalls();
+            }
+        },
+        onReady: () => {
+            entry.status = 'connected';
+            entry.error = null;
+
+            log(`Conectado na call de ${entry.channelName}.`);
+
+            applyMicToClient(voiceClient);
+            applyGainToClient(voiceClient);
+            applyNoiseSuppressionToClient(voiceClient);
+            applySpeakingState(entry);
+
+            publishActiveCalls();
+
+            sendToRenderer('voice:status', `Conectado na call de ${entry.channelName}.`);
+        },
+        onDisconnected: (reason) => {
+            if (voiceClients.get(channelId) !== entry) return;
+
+            if (entry.externallyDisconnected) {
+                voiceClients.delete(channelId);
+                entry.pending = null;
+                entry.status = 'disconnected';
+                entry.error = null;
+                publishActiveCalls();
+                return;
+            }
+
+            if (entry.status === 'connecting') {
+                entry.status = 'error';
+                entry.error = reason || 'Falha desconhecida';
+
+                publishActiveCalls();
+
+                log(`[Voice] Erro ao conectar na call de ${entry.channelName}: ${reason || 'falha desconhecida'}`);
+                sendToRenderer('voice:status', `Erro ao conectar na call de ${entry.channelName}.`);
+
+                setTimeout(() => {
+                    if (voiceClients.get(channelId) === entry) {
+                        voiceClients.delete(channelId);
+                        publishActiveCalls();
+                    }
+                }, 4000);
+
+                return;
+            }
+
+            entry.status = 'error';
+            entry.error = reason || 'Conexão perdida';
+
+            publishActiveCalls();
+
+            log(`[Voice] Conexão perdida na call de ${entry.channelName}: ${reason || 'motivo desconhecido'}`);
+            sendToRenderer('voice:status', `Erro: conexão com a call de ${entry.channelName} foi perdida.`);
+
+            setTimeout(() => {
+                if (voiceClients.get(channelId) === entry) {
+                    voiceClients.delete(channelId);
+                    publishActiveCalls();
+                }
+            }, 4000);
+        },
+        onJoinError: (reason) => {
+            if (voiceClients.get(channelId) !== entry) return;
+
+            entry.status = 'error';
+            entry.error = reason;
+
+            publishActiveCalls();
+
+            sendToRenderer('voice:status', `Erro ao entrar na call de ${entry.channelName}: ${reason}`);
+            log(`[Voice] ERRO ao entrar na call de ${entry.channelName}: ${reason}`);
+
+            setTimeout(() => {
+                if (voiceClients.get(channelId) === entry) {
+                    voiceClients.delete(channelId);
+                    publishActiveCalls();
+                }
+            }, 4000);
+        }
+    });
+
+    entry.client = voiceClient;
+    entry.status = 'connecting';
+
+    voiceClients.set(channelId, entry);
+    publishActiveCalls();
+
+    sendToRenderer('voice:status', `Conectando na call de ${entry.channelName}...`);
+
+    voiceClient.connect();
+
+    if (entry.muted) voiceClient.setMute(true);
+    if (entry.deafened) voiceClient.setDeafen(true);
+}
+
 function createLogsWindow() {
     if (!mainWindow) return;
 
@@ -1193,6 +1406,16 @@ ipcMain.handle('voice:join-call', async (_event, { guild, channel }) => {
     publishActiveCalls();
 });
 
+ipcMain.handle('voice:join-dm-call', async (_event, { channel } = {}) => {
+    if (!channel?.id) return;
+
+    const existing = voiceClients.get(channel.id);
+    if (existing) return; // já conectado (ou conectando) nessa DM
+
+    sendToRenderer('voice:status', `Entrando na call de ${channel.name || 'DM'}...`);
+    startDmVoiceCall(channel);
+});
+
 ipcMain.handle('voice:leave-call', async (_event, { guildId }) => {
     const entry = voiceClients.get(guildId);
     if (!entry) return;
@@ -1200,7 +1423,7 @@ ipcMain.handle('voice:leave-call', async (_event, { guildId }) => {
     entry.pending = null;
     voiceClients.delete(guildId);
     entry.client.disconnect();
-    sendToRenderer('voice:status', `Saiu da call de ${entry.guildName}.`);
+    sendToRenderer('voice:status', `Saiu da call de ${entry.guildName || entry.dmName || entry.channelName}.`);
     publishActiveCalls();
 });
 

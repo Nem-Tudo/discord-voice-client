@@ -480,6 +480,85 @@ function userAvatarUrl(user, size = 64) {
         : null;
 }
 
+// ============================================================
+// DMs (mensagens diretas / grupos)
+// ============================================================
+
+/** Ícone de um canal privado: ícone do grupo (type 3) ou avatar do outro usuário (type 1). */
+function dmAvatarUrl(channel) {
+    if (!channel) return null;
+
+    if (channel.type === 3) {
+        return channel.icon
+            ? `https://cdn.discordapp.com/channel-icons/${channel.id}/${channel.icon}.png?size=64`
+            : null;
+    }
+
+    return userAvatarUrl(channel.recipients?.[0], 64);
+}
+
+/** Nome de exibição de uma DM (nome do outro usuário) ou grupo (nome do grupo, ou lista de membros). */
+function dmDisplayName(channel) {
+    if (!channel) return 'Conversa';
+
+    if (channel.type === 3) {
+        if (channel.name) return channel.name;
+
+        const names = (channel.recipients || [])
+            .map((user) => user.global_name || user.username)
+            .filter(Boolean);
+
+        if (!names.length) return 'Grupo sem nome';
+        if (names.length <= 3) return names.join(', ');
+        return `${names.slice(0, 3).join(', ')} e mais ${names.length - 3}`;
+    }
+
+    const recipient = channel.recipients?.[0];
+    return recipient?.global_name || recipient?.username || 'Usuário desconhecido';
+}
+
+/** Ordena conversas privadas da mais recente para a mais antiga. */
+function sortPrivateChannels(channels) {
+    return [...(channels || [])].sort((a, b) => {
+        let idA, idB;
+        try {
+            idA = BigInt(a.last_message_id || a.id || 0);
+            idB = BigInt(b.last_message_id || b.id || 0);
+        } catch (_) {
+            return 0;
+        }
+        if (idA === idB) return 0;
+        return idA > idB ? -1 : 1;
+    });
+}
+
+function activeDmEntryFor(activeCalls, channelId) {
+    return activeCalls.calls.find((entry) => entry.isDm && entry.channelId === channelId) || null;
+}
+
+function CallIcon() {
+    return (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+                d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1.1.5 1.1 1.1V20c0 .6-.5 1.1-1.1 1.1C10.4 21.1 2.9 13.6 2.9 4.2 2.9 3.6 3.4 3 4 3h3.3c.6 0 1.1.5 1.1 1.1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1L6.6 10.8Z"
+                fill="currentColor"
+            />
+        </svg>
+    );
+}
+
+function HangUpIcon() {
+    return (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+                d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1.1.5 1.1 1.1V20c0 .6-.5 1.1-1.1 1.1C10.4 21.1 2.9 13.6 2.9 4.2 2.9 3.6 3.4 3 4 3h3.3c.6 0 1.1.5 1.1 1.1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1L6.6 10.8Z"
+                fill="currentColor"
+            />
+            <path d="M3 3l18 18" stroke="#f23f42" strokeWidth="2.2" strokeLinecap="round" />
+        </svg>
+    );
+}
+
 function permissionBits(value) {
     try {
         return BigInt(value || 0);
@@ -685,6 +764,16 @@ function App() {
     const [currentUser, setCurrentUser] = useState(null);
     const [activeCalls, setActiveCalls] = useState(emptyActiveCalls);
 
+    const [privateChannels, setPrivateChannels] = useState([]);
+    const [browserMode, setBrowserMode] = useState(() => {
+        return localStorage.getItem('browserMode') === 'dms' ? 'dms' : 'servers';
+    });
+
+    const handleBrowserModeChange = (next) => {
+        setBrowserMode(next);
+        localStorage.setItem('browserMode', next);
+    };
+
     const [streamAdvancedControlsEnabled, setStreamAdvancedControlsEnabled] = useState(() => {
         const saved = localStorage.getItem('streamAdvancedControlsEnabled');
         return saved === 'true';
@@ -791,6 +880,7 @@ function App() {
                 setCurrentUserId(null);
                 setCurrentUser(null);
                 setActiveCalls(emptyActiveCalls);
+                setPrivateChannels([]);
             }),
             api.onLogout(() => {
                 setGuilds({});
@@ -798,12 +888,14 @@ function App() {
                 setCurrentUserId(null);
                 setCurrentUser(null);
                 setActiveCalls(emptyActiveCalls);
+                setPrivateChannels([]);
                 setLoading(false);
                 setStatus('Desconectado');
             }),
             api.onGatewayReady((ready) => {
                 setCurrentUserId(ready.user?.id || null);
                 setCurrentUser(ready.user || null);
+                setPrivateChannels(Array.isArray(ready.private_channels) ? ready.private_channels : []);
                 setGuilds((previous) => {
                     let next = previous;
                     for (const guild of ready.guilds || []) next = normalizeGuilds(next, guild);
@@ -983,8 +1075,25 @@ function App() {
                     selectedGuildId={selectedGuildId}
                     activeCalls={activeCalls}
                     onSelect={setSelectedGuildId}
+                    mode={browserMode}
+                    onModeChange={handleBrowserModeChange}
+                    privateChannels={privateChannels}
                 />
-                <ChannelsPanel guild={selectedGuild} currentUserId={currentUserId} activeCalls={activeCalls} speakingPriorityEnabled={speakingPriorityEnabled} />
+                {browserMode === 'servers' ? (
+                    <ChannelsPanel guild={selectedGuild} currentUserId={currentUserId} activeCalls={activeCalls} speakingPriorityEnabled={speakingPriorityEnabled} />
+                ) : (
+                    <section className="panel channels-panel discord-channels-panel">
+                        <div className="channels-panel-title">
+                            <h2>CHAMADAS DIRETAS</h2>
+                        </div>
+                        <div className="discord-channel-list">
+                            <p className="empty">
+                                Escolha uma conversa na lateral e clique no ícone de ligar para iniciar uma chamada
+                                de voz (apenas áudio, sem chat de texto).
+                            </p>
+                        </div>
+                    </section>
+                )}
                 <ActiveCallsPanel activeCalls={activeCalls} guilds={guilds} />
             </section>
 
@@ -1088,71 +1197,190 @@ function App() {
     );
 }
 
-function ServersPanel({ guilds, selectedGuildId, activeCalls, onSelect }) {
+function ServersPanel({
+    guilds, selectedGuildId, activeCalls, onSelect,
+    mode, onModeChange, privateChannels
+}) {
     const [query, setQuery] = useState('');
 
-    const filtered = useMemo(() => {
+    const filteredGuilds = useMemo(() => {
         const q = normalizeSearch(query);
         if (!q) return guilds;
         return guilds.filter((g) => normalizeSearch(g.name).includes(q));
     }, [guilds, query]);
 
+    const sortedDms = useMemo(() => sortPrivateChannels(privateChannels), [privateChannels]);
+
+    const filteredDms = useMemo(() => {
+        const q = normalizeSearch(query);
+        if (!q) return sortedDms;
+        return sortedDms.filter((channel) => normalizeSearch(dmDisplayName(channel)).includes(q));
+    }, [sortedDms, query]);
+
+    // Reseta a busca ao trocar de aba, pra não filtrar a lista errada "por engano".
+    useEffect(() => {
+        setQuery('');
+    }, [mode]);
+
     return (
         <aside className="panel servers-panel">
-            <h2>SERVIDORES</h2>
-            {
-                guilds.length != 0 && <input
-                    className="panel-search"
-                    type="search"
-                    placeholder="Buscar servidor..."
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    aria-label="Buscar servidor"
-                />
-            }
-            <div className="scroll-list">
-                {!guilds.length ? <p className="empty">Aguardando servidores...</p> : null}
-                {guilds.length && !filtered.length ? (
-                    <p className="empty">Nenhum servidor encontrado.</p>
-                ) : null}
-                {filtered.map((guild) => {
-                    const active = activeEntryFor(activeCalls, guild.id);
-                    const classes = [
-                        'server-row',
-                        guild.id === selectedGuildId ? 'selected' : '',
-                        active ? 'connected' : ''
-                    ]
-                        .filter(Boolean)
-                        .join(' ');
-
-                    return (
-                        <div
-                            key={guild.id}
-                            className={classes}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => onSelect(guild.id)}
-                            onKeyDown={(event) => activateWithKeyboard(event, () => onSelect(guild.id))}
-                        >
-                            <Avatar className="server-icon" text={guild.name} url={serverIconUrl(guild)} />
-                            <span className="server-name">{guild.name}</span>
-                            {active ? (
-                                <button
-                                    className="inline-leave"
-                                    type="button"
-                                    onClick={(event) => {
-                                        event.stopPropagation();
-                                        window.discordVoice.leaveCall(guild.id);
-                                    }}
-                                >
-                                    Sair
-                                </button>
-                            ) : null}
-                        </div>
-                    );
-                })}
+            <div className="servers-mode-switch" role="tablist" aria-label="Servidores ou mensagens diretas">
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === 'servers'}
+                    className={`servers-mode-tab${mode === 'servers' ? ' active' : ''}`}
+                    onClick={() => onModeChange('servers')}
+                >
+                    Servidores
+                </button>
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === 'dms'}
+                    className={`servers-mode-tab${mode === 'dms' ? ' active' : ''}`}
+                    onClick={() => onModeChange('dms')}
+                >
+                    DMs
+                </button>
             </div>
+
+            {mode === 'servers' ? (
+                <>
+                    <h2>SERVIDORES</h2>
+                    {
+                        guilds.length != 0 && <input
+                            className="panel-search"
+                            type="search"
+                            placeholder="Buscar servidor..."
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            aria-label="Buscar servidor"
+                        />
+                    }
+                    <div className="scroll-list">
+                        {!guilds.length ? <p className="empty">Aguardando servidores...</p> : null}
+                        {guilds.length && !filteredGuilds.length ? (
+                            <p className="empty">Nenhum servidor encontrado.</p>
+                        ) : null}
+                        {filteredGuilds.map((guild) => {
+                            const active = activeEntryFor(activeCalls, guild.id);
+                            const classes = [
+                                'server-row',
+                                guild.id === selectedGuildId ? 'selected' : '',
+                                active ? 'connected' : ''
+                            ]
+                                .filter(Boolean)
+                                .join(' ');
+
+                            return (
+                                <div
+                                    key={guild.id}
+                                    className={classes}
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => onSelect(guild.id)}
+                                    onKeyDown={(event) => activateWithKeyboard(event, () => onSelect(guild.id))}
+                                >
+                                    <Avatar className="server-icon" text={guild.name} url={serverIconUrl(guild)} />
+                                    <span className="server-name">{guild.name}</span>
+                                    {active ? (
+                                        <button
+                                            className="inline-leave"
+                                            type="button"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                window.discordVoice.leaveCall(guild.id);
+                                            }}
+                                        >
+                                            Sair
+                                        </button>
+                                    ) : null}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </>
+            ) : (
+                <>
+                    <h2>MENSAGENS DIRETAS</h2>
+                    {
+                        sortedDms.length != 0 && <input
+                            className="panel-search"
+                            type="search"
+                            placeholder="Buscar conversa..."
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            aria-label="Buscar conversa"
+                        />
+                    }
+                    <div className="scroll-list">
+                        {!sortedDms.length ? <p className="empty">Nenhuma conversa recente.</p> : null}
+                        {sortedDms.length && !filteredDms.length ? (
+                            <p className="empty">Nenhuma conversa encontrada.</p>
+                        ) : null}
+                        {filteredDms.map((channel) => (
+                            <DmRow key={channel.id} channel={channel} activeCalls={activeCalls} />
+                        ))}
+                    </div>
+                </>
+            )}
         </aside>
+    );
+}
+
+function DmRow({ channel, activeCalls }) {
+    const active = activeDmEntryFor(activeCalls, channel.id);
+    const name = dmDisplayName(channel);
+    const avatarUrl = dmAvatarUrl(channel);
+
+    const connecting = active?.status === 'connecting';
+    const error = active?.status === 'error';
+
+    const classes = [
+        'server-row',
+        'dm-row',
+        active ? 'connected' : '',
+        error ? 'call-error' : ''
+    ]
+        .filter(Boolean)
+        .join(' ');
+
+    const call = async (event) => {
+        event.stopPropagation();
+        if (active) return;
+
+        await window.discordVoice.joinDmCall({
+            id: channel.id,
+            name,
+            avatarUrl,
+            type: channel.type
+        });
+    };
+
+    const hangUp = (event) => {
+        event.stopPropagation();
+        window.discordVoice.leaveCall(channel.id);
+    };
+
+    return (
+        <div className={classes}>
+            <Avatar className="server-icon" text={name} url={avatarUrl} />
+            <span className="server-name">
+                {name}
+                {error ? <span className="dm-row-error"> — {active.error || 'Erro ao conectar'}</span> : null}
+            </span>
+            {active ? (
+                <button className="inline-leave dm-hangup-button" type="button" onClick={hangUp} title="Sair da call">
+                    <HangUpIcon />
+                    {connecting ? 'Cancelar' : 'Sair'}
+                </button>
+            ) : (
+                <button className="dm-call-button" type="button" onClick={call} title={`Ligar para ${name}`} aria-label={`Ligar para ${name}`}>
+                    <CallIcon />
+                </button>
+            )}
+        </div>
     );
 }
 
@@ -1991,6 +2219,49 @@ function ActiveCallsPanel({ activeCalls, guilds }) {
             <div className="scroll-list">
                 {!activeCalls.calls.length ? <p className="empty">Nenhuma call ativa.</p> : null}
                 {activeCalls.calls.map((entry) => {
+                    if (entry.isDm) {
+                        const title = entry.switching ? `${entry.dmName}...` : (entry.dmName || 'Chamada de voz');
+
+                        return (
+                            <article key={entry.id} className="active-card">
+                                <Avatar
+                                    className="active-server-icon"
+                                    text={entry.dmName}
+                                    url={entry.dmAvatarUrl}
+                                />
+                                <div className="active-labels">
+                                    <span className="active-title">{title}</span>
+                                    <span className="active-meta">
+                                        {entry.dmType === 3 ? 'Chamada em grupo' : 'Chamada direta'}
+                                    </span>
+                                    <div className="audio-meter active-audio-meter" aria-label="Áudio recebido da call">
+                                        <div
+                                            className="audio-meter-fill"
+                                            style={{ width: `${Math.round((entry.outputLevel || 0) * 100)}%` }}
+                                        />
+                                    </div>
+                                </div>
+                                <IconButton
+                                    icon={entry.muted ? micOffIcon : micOnIcon}
+                                    title={entry.muted ? 'Reativar microfone' : 'Mutar microfone'}
+                                    onClick={() => window.discordVoice.toggleCallMute(entry.id)}
+                                />
+                                <IconButton
+                                    icon={entry.deafened ? deafenOnIcon : deafenOffIcon}
+                                    title={entry.deafened ? 'Reativar áudio' : 'Ensurdecer'}
+                                    onClick={() => window.discordVoice.toggleCallDeafen(entry.id)}
+                                />
+                                <button
+                                    className="leave-button"
+                                    type="button"
+                                    onClick={() => window.discordVoice.leaveCall(entry.id)}
+                                >
+                                    Sair
+                                </button>
+                            </article>
+                        );
+                    }
+
                     // O backend recebe apenas channel_id no VOICE_STATE_UPDATE.
                     // O nome verdadeiro deve ser resolvido pelo cache de guilds
                     // mais recente do renderer, evitando mostrar o ID quando um
@@ -2002,7 +2273,7 @@ function ActiveCallsPanel({ activeCalls, guilds }) {
                             : 'Canal de voz');
 
                     return (
-                        <article key={entry.guildId} className="active-card">
+                        <article key={entry.id} className="active-card">
                             <Avatar
                                 className="active-server-icon"
                                 text={entry.guildName}
@@ -2023,17 +2294,17 @@ function ActiveCallsPanel({ activeCalls, guilds }) {
                             <IconButton
                                 icon={entry.muted ? micOffIcon : micOnIcon}
                                 title={entry.muted ? 'Reativar microfone' : 'Mutar microfone'}
-                                onClick={() => window.discordVoice.toggleCallMute(entry.guildId)}
+                                onClick={() => window.discordVoice.toggleCallMute(entry.id)}
                             />
                             <IconButton
                                 icon={entry.deafened ? deafenOnIcon : deafenOffIcon}
                                 title={entry.deafened ? 'Reativar áudio' : 'Ensurdecer'}
-                                onClick={() => window.discordVoice.toggleCallDeafen(entry.guildId)}
+                                onClick={() => window.discordVoice.toggleCallDeafen(entry.id)}
                             />
                             <button
                                 className="leave-button"
                                 type="button"
-                                onClick={() => window.discordVoice.leaveCall(entry.guildId)}
+                                onClick={() => window.discordVoice.leaveCall(entry.id)}
                             >
                                 Sair
                             </button>
