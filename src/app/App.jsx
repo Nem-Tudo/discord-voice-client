@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import tippy from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 
@@ -783,6 +783,104 @@ function normalizeSearch(text) {
         .trim();
 }
 
+
+const UserAudioContext = createContext(null);
+
+function useUserAudio() {
+    const value = useContext(UserAudioContext);
+    return value || {
+        volumes: {},
+        muted: [],
+        favorites: [],
+        setVolume: () => {},
+        setMuted: () => {},
+        setFavorite: () => {},
+        openUserAudio: () => {}
+    };
+}
+
+function UserAudioModal({ user, onClose }) {
+    const { volumes, muted, favorites, setVolume, setMuted, setFavorite } = useUserAudio();
+    const userId = String(user?.id || '');
+    const [volume, setLocalVolume] = useState(() => Number(volumes[userId] ?? 100));
+    const isMuted = muted.includes(userId);
+    const isFavorite = favorites.includes(userId);
+    const modalRef = useRef(null);
+
+    useOutsideClick(modalRef, onClose, true);
+
+    useEffect(() => {
+        setLocalVolume(Number(volumes[userId] ?? 100));
+    }, [userId, volumes]);
+
+    if (!userId) return null;
+
+    const name = user?.name || user?.global_name || user?.username || 'Usuário desconhecido';
+    const avatarUrl = user?.avatarUrl || userAvatarUrl(user, 128);
+
+    const handleVolume = (event) => {
+        const value = Math.max(0, Math.min(200, Number(event.target.value) || 0));
+        setLocalVolume(value);
+        setVolume(userId, value);
+    };
+
+    return (
+        <div className="user-audio-modal-backdrop" onContextMenu={(event) => event.preventDefault()}>
+            <div className="user-audio-modal shortcut-recorder-menu user-audio-shortcut-style" ref={modalRef} onClick={(event) => event.stopPropagation()}>
+                <div className="user-audio-modal-titlebar">
+                    <div className="shortcut-recorder-title">Áudio do usuário</div>
+                    <button type="button" className="user-audio-modal-close" onClick={onClose} aria-label="Fechar">×</button>
+                </div>
+
+                <div className="shortcut-recorder-current user-audio-user-line">
+                    <span className="user-audio-user-name">{name}</span>
+                    {isFavorite ? <span className="user-favorite-star" title="Favorito">★</span> : null}
+                </div>
+
+                <div className="user-audio-control-block">
+                    <div className="shortcut-recorder-current user-audio-control-label">
+                        <span>Volume</span>
+                        <b>{Math.round(volume)}%</b>
+                    </div>
+                    <input
+                        className="user-audio-volume-slider"
+                        type="range"
+                        min="0"
+                        max="200"
+                        step="1"
+                        value={volume}
+                        onChange={handleVolume}
+                    />
+                    <div className="user-audio-volume-labels">
+                        <span>0%</span><span>100%</span><span>200%</span>
+                    </div>
+                </div>
+
+                <button
+                    type="button"
+                    className={`shortcut-recorder-btn${isMuted ? ' user-audio-btn-danger' : ''}`}
+                    onClick={() => setMuted(userId, !isMuted)}
+                >
+                    {isMuted ? 'Desmutar pessoa' : 'Mutar pessoa'}
+                </button>
+
+                <button
+                    type="button"
+                    className={`shortcut-recorder-btn${isFavorite ? ' user-audio-btn-favorite-active' : ''}`}
+                    onClick={() => setFavorite(userId, !isFavorite)}
+                >
+                    <span className="user-audio-star">★</span>
+                    {isFavorite ? 'Remover favorito' : 'Favoritar'}
+                </button>
+
+                <div className="shortcut-recorder-hint user-audio-modal-hint">
+                    Quando um favorito falar, os usuários não favoritos terão o áudio reduzido temporariamente.
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function App() {
     const [token, setToken] = useState('');
     const [status, setStatus] = useState('Informe o token para carregar seus servidores.');
@@ -791,6 +889,8 @@ function App() {
     const [selectedGuildId, setSelectedGuildId] = useState(null);
     const [currentUserId, setCurrentUserId] = useState(null);
     const [currentUser, setCurrentUser] = useState(null);
+    const [userAudioConfig, setUserAudioConfig] = useState({ volumes: {}, muted: [], favorites: [] });
+    const [selectedAudioUser, setSelectedAudioUser] = useState(null);
     const [activeCalls, setActiveCalls] = useState(emptyActiveCalls);
 
     const [privateChannels, setPrivateChannels] = useState([]);
@@ -872,6 +972,45 @@ function App() {
         } catch (err) {
             console.error('Erro ao listar microfones:', err);
         }
+    };
+
+    useEffect(() => {
+        window.discordVoice.getUserAudioConfig?.().then((config) => {
+            if (config) setUserAudioConfig({
+                volumes: config.volumes || {},
+                muted: config.muted || [],
+                favorites: config.favorites || []
+            });
+        }).catch(() => {});
+    }, []);
+
+    const setUserVolume = async (userId, value) => {
+        const id = String(userId);
+        setUserAudioConfig((current) => ({
+            ...current,
+            volumes: { ...current.volumes, [id]: value }
+        }));
+        await window.discordVoice.setUserAudio?.(id, { volume: value });
+    };
+
+    const setUserMuted = async (userId, muted) => {
+        const id = String(userId);
+        setUserAudioConfig((current) => {
+            const next = new Set(current.muted || []);
+            if (muted) next.add(id); else next.delete(id);
+            return { ...current, muted: [...next] };
+        });
+        await window.discordVoice.setUserAudio?.(id, { muted });
+    };
+
+    const setUserFavorite = async (userId, favorite) => {
+        const id = String(userId);
+        setUserAudioConfig((current) => {
+            const next = new Set(current.favorites || []);
+            if (favorite) next.add(id); else next.delete(id);
+            return { ...current, favorites: [...next] };
+        });
+        await window.discordVoice.setUserFavorite?.(id, favorite);
     };
 
     useEffect(() => {
@@ -1131,6 +1270,15 @@ function App() {
     }
 
     return (
+        <UserAudioContext.Provider value={{
+            volumes: userAudioConfig.volumes || {},
+            muted: userAudioConfig.muted || [],
+            favorites: userAudioConfig.favorites || [],
+            setVolume: setUserVolume,
+            setMuted: setUserMuted,
+            setFavorite: setUserFavorite,
+            openUserAudio: setSelectedAudioUser
+        }}>
         <main className="app-shell">
             {/* ===== TOPO: usuário logado ===== */}
             {currentUser ? (
@@ -1314,7 +1462,11 @@ function App() {
                     await window.discordVoice.setStreamAdvancedControls?.(next);
                 }}
             />
+            {selectedAudioUser ? (
+                <UserAudioModal user={selectedAudioUser} onClose={() => setSelectedAudioUser(null)} />
+            ) : null}
         </main>
+        </UserAudioContext.Provider>
     );
 }
 
@@ -1809,12 +1961,19 @@ function CallMemberTile({
     userId, name, avatarUrl, muted, deafened, video, stream, speaking,
     isSelf = false, connected = false, onWatchStream, onWatchCamera
 }) {
+    const { favorites, openUserAudio } = useUserAudio();
+    const isFavorite = favorites.includes(String(userId));
     return (
         <div
             className={`direct-call-tile${isSelf ? ' is-self' : ''}`}
             role={isSelf ? undefined : 'button'}
             tabIndex={isSelf ? undefined : 0}
             onClick={isSelf ? undefined : () => window.discordVoice.openDiscordUser(userId)}
+            onContextMenu={isSelf ? undefined : (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openUserAudio({ id: String(userId), name, avatarUrl });
+            }}
             onKeyDown={isSelf ? undefined : (event) => activateWithKeyboard(event, () => window.discordVoice.openDiscordUser(userId))}
         >
             <div className="direct-call-tile-avatar-wrap">
@@ -1855,6 +2014,7 @@ function CallMemberTile({
 
             <span className="direct-call-tile-name">
                 {name}
+                {isFavorite ? <span className="user-favorite-star" title="Favorito">★</span> : null}
                 {isSelf ? ' (você)' : ''}
             </span>
 
@@ -2216,6 +2376,7 @@ function ChannelsPanel({ guild, currentUserId, activeCalls, speakingPriorityEnab
 }
 
 function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPriorityEnabled }) {
+    const { favorites, openUserAudio } = useUserAudio();
     const active = activeEntryForChannel(
         activeCalls,
         guild.id,
@@ -2434,6 +2595,11 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
                                 onClick={() => {
                                     window.discordVoice.openDiscordUser(state.user_id);
                                 }}
+                                onContextMenu={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    openUserAudio({ id: String(state.user_id), name, avatarUrl: userAvatarUrl(user, 128) });
+                                }}
                             >
                                 <Avatar
                                     className={`discord-voice-member-avatar${state.speaking ? ' speaking' : ''}`}
@@ -2443,6 +2609,7 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
 
                                 <span className="discord-voice-member-name">
                                     {name}
+                                    {favorites.includes(String(state.user_id)) ? <span className="user-favorite-star" title="Favorito">★</span> : null}
                                 </span>
 
                                 {state.self_video ? (

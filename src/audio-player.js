@@ -25,6 +25,11 @@ class AudioPlayer {
         this.isDestroyed = false;
         this.userStreams = new Map(); // ssrc -> { decoder, rtAudio, ready, speaking, lastVoiceAt, releaseTimer }
         this._ssrcUserIds = new Map();
+        this.userVolumes = new Map(); // user_id -> percent (0-200)
+        this.userMutes = new Set();
+        this.favoriteUsers = new Set();
+        this.favoriteDuckFactor = 0.35;
+        this.favoriteSpeaking = false;
 
         this.debugFlags = {
             firstPacket: false,
@@ -231,6 +236,60 @@ class AudioPlayer {
         try { this.onAudioLevel(level); } catch (_) { }
     }
 
+    setUserVolume(userId, percent) {
+        const id = String(userId || '');
+        if (!id) return;
+        const value = Math.max(0, Math.min(200, Number(percent) || 0));
+        this.userVolumes.set(id, value);
+    }
+
+    setUserMute(userId, muted) {
+        const id = String(userId || '');
+        if (!id) return;
+        if (muted) this.userMutes.add(id);
+        else this.userMutes.delete(id);
+    }
+
+    setFavoriteUsers(userIds) {
+        this.favoriteUsers = new Set((Array.isArray(userIds) ? userIds : []).map(String));
+    }
+
+    setFavoriteSpeaking(speaking) {
+        this.favoriteSpeaking = Boolean(speaking);
+    }
+
+    resetUserAudioSettings() {
+        this.userVolumes.clear();
+        this.userMutes.clear();
+        this.favoriteUsers.clear();
+        this.favoriteSpeaking = false;
+    }
+
+    _getOutputGain(userId) {
+        const id = String(userId || '');
+        if (this.userMutes.has(id)) return 0;
+
+        const base = (this.userVolumes.get(id) ?? 100) / 100;
+        if (this.favoriteSpeaking && !this.favoriteUsers.has(id)) {
+            return base * this.favoriteDuckFactor;
+        }
+        return base;
+    }
+
+    _applyOutputGain(pcmData, userId) {
+        const gain = this._getOutputGain(userId);
+        if (gain === 1) return pcmData;
+
+        const out = Buffer.from(pcmData);
+        for (let i = 0; i + 1 < out.length; i += 2) {
+            let sample = out.readInt16LE(i) * gain;
+            if (sample > 32767) sample = 32767;
+            if (sample < -32768) sample = -32768;
+            out.writeInt16LE(Math.round(sample), i);
+        }
+        return out;
+    }
+
     _updateVoiceActivity(ssrc, userId, pcmData) {
         if (!this.onSpeaking || !pcmData || pcmData.length < 4) return;
 
@@ -426,9 +485,9 @@ class AudioPlayer {
             this._updateAudioLevel(pcmData);
             this._updateVoiceActivity(ssrc, userId, pcmData);
 
-            // 7. PCM → SPEAKER
+            // 7. PCM → SPEAKER (volume individual + ducking de favoritos)
             try {
-                rtAudio.write(pcmData);
+                rtAudio.write(this._applyOutputGain(pcmData, userId));
             } catch (e) {
                 if (!this.debugFlags.speakerError) {
                     this.log(`[Áudio-Debug] (4/4) ERRO HARDWARE (SSRC ${ssrc}): ${e.message}`);
@@ -488,6 +547,10 @@ class AudioPlayer {
         }
         this.userStreams.clear();
         this._ssrcUserIds.clear();
+        this.userVolumes.clear();
+        this.userMutes.clear();
+        this.favoriteUsers.clear();
+        this.favoriteSpeaking = false;
         this.isInitialized = false;
         this.isDestroyed = false;
         for (const key in this.debugFlags) {
@@ -503,6 +566,10 @@ class AudioPlayer {
         }
         this.userStreams.clear();
         this._ssrcUserIds.clear();
+        this.userVolumes.clear();
+        this.userMutes.clear();
+        this.favoriteUsers.clear();
+        this.favoriteSpeaking = false;
         this.isInitialized = false;
 
         for (const key in this.debugFlags) {

@@ -39,6 +39,15 @@ contextBridge.exposeInMainWorld('discordVoice', {
     toggleAllDeafen() {
         return ipcRenderer.invoke('voice:set-all-deafen');
     },
+    getUserAudioConfig() {
+        return ipcRenderer.invoke('voice:get-user-audio-config');
+    },
+    setUserAudio(userId, data) {
+        return ipcRenderer.invoke('voice:set-user-audio', { userId, ...(data || {}) });
+    },
+    setUserFavorite(userId, favorite) {
+        return ipcRenderer.invoke('voice:set-user-favorite', { userId, favorite });
+    },
     getShortcuts() {
         return ipcRenderer.invoke('shortcuts:get');
     },

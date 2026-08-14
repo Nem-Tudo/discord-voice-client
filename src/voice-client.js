@@ -67,6 +67,7 @@ function createVoiceClient({
     channelId: initialChannelId,
     deviceId = null,
     gainPercent = 100,
+    userAudioSettings = null,
     onLog,
     onGatewayReady,
     onGuildCreate,
@@ -112,6 +113,13 @@ function createVoiceClient({
     // Preferências de microfone (podem ser alteradas antes ou depois do init)
     let preferredDeviceId = deviceId ?? null;
     let preferredGainPercent = Math.max(0, Math.min(2000, Number(gainPercent) || 100));
+    let audioSettings = {
+        volumes: {},
+        muted: [],
+        favorites: [],
+        favoriteSpeaking: false,
+        ...(userAudioSettings || {})
+    };
 
 
     // ============================================================
@@ -235,6 +243,19 @@ function createVoiceClient({
     // Cada Go Live é uma media session independente. Mantemos um viewer por
     // stream_key para permitir múltiplas transmissões simultâneas no mesmo
     // canal de voz, exatamente como o protocolo de stream do Discord prevê.
+    function applyUserAudioSettings() {
+        for (const [userId, percent] of Object.entries(audioSettings.volumes || {})) {
+            audioPlayer.setUserVolume(userId, percent);
+        }
+        for (const userId of (audioSettings.muted || [])) {
+            audioPlayer.setUserMute(userId, true);
+        }
+        audioPlayer.setFavoriteUsers(audioSettings.favorites || []);
+        audioPlayer.setFavoriteSpeaking(Boolean(audioSettings.favoriteSpeaking));
+    }
+
+    applyUserAudioSettings();
+
     const streamViewers = new Map();
 
     const ensureStreamViewer = (streamKey = null) => {
@@ -2164,6 +2185,44 @@ function createVoiceClient({
     // ============================================================
 
     return {
+
+        setUserAudioSettings(settings = {}) {
+            audioSettings = {
+                volumes: {},
+                muted: [],
+                favorites: [],
+                favoriteSpeaking: false,
+                ...settings
+            };
+            audioPlayer.resetUserAudioSettings?.();
+            applyUserAudioSettings();
+        },
+
+        setUserVolume(userId, percent) {
+            const id = String(userId || '');
+            if (!id) return;
+            audioSettings.volumes = { ...(audioSettings.volumes || {}), [id]: percent };
+            audioPlayer.setUserVolume(id, percent);
+        },
+
+        setUserMute(userId, muted) {
+            const id = String(userId || '');
+            if (!id) return;
+            const current = new Set((audioSettings.muted || []).map(String));
+            if (muted) current.add(id); else current.delete(id);
+            audioSettings.muted = [...current];
+            audioPlayer.setUserMute(id, muted);
+        },
+
+        setFavoriteUsers(userIds) {
+            audioSettings.favorites = Array.isArray(userIds) ? userIds.map(String) : [];
+            audioPlayer.setFavoriteUsers(audioSettings.favorites);
+        },
+
+        setFavoriteSpeaking(speaking) {
+            audioSettings.favoriteSpeaking = Boolean(speaking);
+            audioPlayer.setFavoriteSpeaking(audioSettings.favoriteSpeaking);
+        },
 
         connect() {
             if (!DAVESession) {

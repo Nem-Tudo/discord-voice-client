@@ -1933,3 +1933,24 @@ input:disabled {
     padding: 10px 0 4px;
     margin-top: 0;
 }
+/* ===== Áudio individual / favorito ===== */
+.user-favorite-star { display:inline-block; margin-left:6px; font-size:.9em; line-height:1; vertical-align:middle; }
+.user-audio-modal-backdrop { position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.52); backdrop-filter:blur(3px); }
+.user-audio-modal.user-audio-shortcut-style { position:relative; width:min(320px,calc(100vw - 48px)); min-width:220px; box-sizing:border-box; background:#2b2d31; color:#f2f3f5; border:1px solid #1e1f22; border-radius:8px; padding:10px; box-shadow:0 8px 24px rgba(0,0,0,.45); font-size:13px; cursor:default; }
+.user-audio-modal-titlebar { display:flex; align-items:center; gap:8px; min-height:24px; margin-bottom:6px; }
+.user-audio-modal-titlebar .shortcut-recorder-title { flex:1; margin-bottom:0; }
+.user-audio-modal-close { width:24px; height:24px; flex:0 0 24px; padding:0; border:0; border-radius:4px; background:transparent; color:#949ba4; font-size:20px; line-height:20px; cursor:pointer; }
+.user-audio-modal-close:hover { background:#1e1f22; color:#f2f3f5; }
+.user-audio-user-line { display:flex; align-items:center; min-height:30px; margin-bottom:4px; padding:6px 8px; background:#1e1f22; border-radius:4px; }
+.user-audio-user-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.user-audio-control-block { margin:8px 0 4px; padding:8px; background:#1e1f22; border-radius:4px; }
+.user-audio-control-label { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.user-audio-control-label b { color:#f2f3f5; font-variant-numeric:tabular-nums; }
+.user-audio-volume-slider { width:100%; margin:2px 0 4px; cursor:pointer; }
+.user-audio-volume-labels { display:flex; justify-content:space-between; color:#72767d; font-size:10px; }
+.user-audio-modal .shortcut-recorder-btn { margin-top:4px; }
+.user-audio-modal .shortcut-recorder-btn.user-audio-btn-danger:hover { background:#da373c; }
+.user-audio-modal .shortcut-recorder-btn.user-audio-btn-favorite-active { background:#5865f2; }
+.user-audio-modal .shortcut-recorder-btn.user-audio-btn-favorite-active:hover { background:#4752c4; }
+.user-audio-star { margin-right:6px; }
+.user-audio-modal-hint { margin-top:8px; }

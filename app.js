@@ -36,6 +36,59 @@ let micTestPipeline = null;
 let micTestGainProcessor = null;
 
 const voiceClients = new Map();
+const USER_AUDIO_CONFIG_PATH = path.join(app.getPath('userData'), 'user-audio.json');
+let userAudioConfig = { volumes: {}, muted: [], favorites: [] };
+let favoriteSpeakingUsers = new Set();
+
+function loadUserAudioConfig() {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(USER_AUDIO_CONFIG_PATH, 'utf8'));
+        userAudioConfig = {
+            volumes: parsed?.volumes && typeof parsed.volumes === 'object' ? parsed.volumes : {},
+            muted: Array.isArray(parsed?.muted) ? parsed.muted.map(String) : [],
+            favorites: Array.isArray(parsed?.favorites) ? parsed.favorites.map(String) : []
+        };
+    } catch (_) {
+        userAudioConfig = { volumes: {}, muted: [], favorites: [] };
+    }
+}
+
+function saveUserAudioConfig() {
+    try {
+        fs.mkdirSync(path.dirname(USER_AUDIO_CONFIG_PATH), { recursive: true });
+        fs.writeFileSync(USER_AUDIO_CONFIG_PATH, JSON.stringify(userAudioConfig, null, 2), 'utf8');
+    } catch (error) {
+        log(`[Áudio-Usuário] Erro ao salvar configuração: ${error.message}`);
+    }
+}
+
+function getUserAudioConfigForClient() {
+    return {
+        volumes: { ...(userAudioConfig.volumes || {}) },
+        muted: [...(userAudioConfig.muted || [])],
+        favorites: [...(userAudioConfig.favorites || [])],
+        favoriteSpeaking: favoriteSpeakingUsers.size > 0
+    };
+}
+
+function applyUserAudioConfigToClient(client) {
+    if (!client) return;
+    client.setUserAudioSettings?.(getUserAudioConfigForClient());
+}
+
+function updateFavoriteSpeaking(userId, speaking) {
+    const id = String(userId || '');
+    if (!id) return;
+    if (speaking && userAudioConfig.favorites.includes(id)) favoriteSpeakingUsers.add(id);
+    else favoriteSpeakingUsers.delete(id);
+
+    const ducking = favoriteSpeakingUsers.size > 0;
+    for (const entry of voiceClients.values()) {
+        entry.client?.setFavoriteSpeaking?.(ducking);
+    }
+}
+
+loadUserAudioConfig();
 
 // ============================================================
 // Atalhos de teclado globais (mutar/ensurdecer)
@@ -466,6 +519,7 @@ function logout() {
     // Garante que nenhum estado global de voz permaneça para o próximo login.
     allMuted = false;
     allDeafened = false;
+    favoriteSpeakingUsers.clear();
 
     publishActiveCalls();
 
@@ -489,6 +543,7 @@ function stopAllVoiceClients() {
     voiceClients.clear();
     allMuted = false;
     allDeafened = false;
+    favoriteSpeakingUsers.clear();
     publishActiveCalls();
 }
 
@@ -762,6 +817,7 @@ function startVoiceCall(guild, channel, {
         channelId: channel.id,
         deviceId: selectedMicId,
         gainPercent: selectedMicGain,
+        userAudioSettings: getUserAudioConfigForClient(),
         onLog: log,
         onVoiceStateUpdate: (state) => {
             if (voiceClients.get(guild.id) !== entry) return;
@@ -834,6 +890,7 @@ function startVoiceCall(guild, channel, {
             if (voiceClients.get(guild.id) !== entry) return;
             if (!speaking?.user_id) return;
 
+            updateFavoriteSpeaking(speaking.user_id, Boolean(speaking.speaking));
             sendToRenderer('voice:speaking', {
                 guild_id: guild.id,
                 user_id: String(speaking.user_id),
@@ -1093,6 +1150,7 @@ function startDmVoiceCall(dmChannel) {
         channelId,
         deviceId: selectedMicId,
         gainPercent: selectedMicGain,
+        userAudioSettings: getUserAudioConfigForClient(),
         onLog: log,
         onVoiceStateUpdate: (state) => {
             if (voiceClients.get(channelId) !== entry) return;
@@ -1180,6 +1238,7 @@ function startDmVoiceCall(dmChannel) {
             if (voiceClients.get(channelId) !== entry) return;
             if (!speaking?.user_id) return;
 
+            updateFavoriteSpeaking(speaking.user_id, Boolean(speaking.speaking));
             sendToRenderer('voice:speaking', {
                 guild_id: null,
                 channel_id: channelId,
@@ -1703,6 +1762,52 @@ ipcMain.handle('voice:set-all-mute', async () => {
 
 ipcMain.handle('voice:set-all-deafen', async () => {
     toggleAllDeafen();
+});
+
+// ============================================================
+// IPC – áudio individual por usuário
+// ============================================================
+
+ipcMain.handle('voice:get-user-audio-config', async () => ({
+    volumes: { ...(userAudioConfig.volumes || {}) },
+    muted: [...(userAudioConfig.muted || [])],
+    favorites: [...(userAudioConfig.favorites || [])]
+}));
+
+ipcMain.handle('voice:set-user-audio', async (_event, { userId, volume, muted } = {}) => {
+    const id = String(userId || '');
+    if (!id) return { ok: false, error: 'Usuário inválido.' };
+
+    if (volume !== undefined) {
+        userAudioConfig.volumes[id] = Math.max(0, Math.min(200, Number(volume) || 0));
+    }
+
+    if (muted !== undefined) {
+        const current = new Set((userAudioConfig.muted || []).map(String));
+        if (muted) current.add(id); else current.delete(id);
+        userAudioConfig.muted = [...current];
+    }
+
+    saveUserAudioConfig();
+    for (const entry of voiceClients.values()) applyUserAudioConfigToClient(entry.client);
+    return { ok: true, config: getUserAudioConfigForClient() };
+});
+
+ipcMain.handle('voice:set-user-favorite', async (_event, { userId, favorite } = {}) => {
+    const id = String(userId || '');
+    if (!id) return { ok: false, error: 'Usuário inválido.' };
+
+    const current = new Set((userAudioConfig.favorites || []).map(String));
+    if (favorite) current.add(id); else current.delete(id);
+    userAudioConfig.favorites = [...current];
+    saveUserAudioConfig();
+
+    // Recalcula o ducking caso o usuário favorito esteja falando.
+    for (const speakingId of [...favoriteSpeakingUsers]) {
+        if (!current.has(speakingId)) favoriteSpeakingUsers.delete(speakingId);
+    }
+    for (const entry of voiceClients.values()) applyUserAudioConfigToClient(entry.client);
+    return { ok: true, config: getUserAudioConfigForClient() };
 });
 
 // ============================================================
