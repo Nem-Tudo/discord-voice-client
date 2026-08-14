@@ -70,6 +70,7 @@ function createVoiceClient({
     onLog,
     onGatewayReady,
     onGuildCreate,
+    onCallUpdate,
     onVoiceStateUpdate,
     onSpeaking,
     onAudioLevel,
@@ -452,6 +453,35 @@ function createVoiceClient({
     }
 
 
+    function requestExistingCall(channelId) {
+        const id = String(channelId || '').trim();
+        if (!id) return;
+
+        // Gateway opcode 13 (Request Call Connect) asks Discord to send a
+        // CALL_CREATE event containing the current participants when a DM or
+        // group DM already has an active call. This is a deterministic
+        // fallback for clients/gateway versions that do not honor
+        // AUTO_CALL_CONNECT during IDENTIFY.
+        sendGateway(13, { channel_id: id });
+    }
+
+    function requestExistingCalls(privateChannels) {
+        if (!Array.isArray(privateChannels)) return;
+
+        // Do not spam the Gateway with duplicate requests. Only private DM
+        // and group-DM channels can have these calls. A small stagger also
+        // avoids sending a large burst when an account has many DMs.
+        const channels = privateChannels
+            .filter((channel) => channel && (channel.type === 1 || channel.type === 3) && channel.id)
+            .map((channel) => String(channel.id));
+
+        channels.forEach((id, index) => {
+            setTimeout(() => {
+                if (!intentionalDisconnect) requestExistingCall(id);
+            }, Math.min(index * 25, 5000));
+        });
+    }
+
     function identifyGateway() {
         sendGateway(
             2,
@@ -483,6 +513,13 @@ function createVoiceClient({
                 if (onGatewayReady) {
                     onGatewayReady(d);
                 }
+
+                // A call may have started before this application connected.
+                // Ask the Gateway for the current call state of every private
+                // channel immediately after READY. CALL_CREATE includes the
+                // voice_states array, so the UI can show the call and everyone
+                // already inside it without requiring the user to join.
+                requestExistingCalls(d.private_channels);
 
                 if (channelId) {
                     joinVoiceChannel();
@@ -594,6 +631,28 @@ function createVoiceClient({
             case 'GUILD_CREATE': {
                 if (onGuildCreate) {
                     onGuildCreate(d);
+                }
+
+                break;
+            }
+
+
+            /*
+             * Calls de DM/grupo não usam VOICE_STATE_UPDATE pra avisar quem
+             * já está na call quando você ainda não entrou — esse gateway só
+             * recebe VOICE_STATE_UPDATE de um canal depois de já estar
+             * "inscrito" nele (o que só acontece ao entrar na call). Antes de
+             * entrar, o Discord avisa via CALL_CREATE (que já vem com
+             * voice_states de quem já está lá), CALL_UPDATE (mudanças de
+             * ringing/region) e CALL_DELETE (call encerrada). Sem tratar
+             * esses três, a UI nunca sabia que já tinha gente numa call de
+             * grupo antes de você apertar "Ligar".
+             */
+            case 'CALL_CREATE':
+            case 'CALL_UPDATE':
+            case 'CALL_DELETE': {
+                if (onCallUpdate) {
+                    onCallUpdate(type, d);
                 }
 
                 break;

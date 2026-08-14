@@ -532,6 +532,35 @@ function sortPrivateChannels(channels) {
     });
 }
 
+// Junta os dois formatos de voice state de DM que circulam no app: o cru do
+// gateway (snake_case, vindo de dmVoiceStates/browserClient) e o já
+// processado pelo backend (camelCase, vindo de entry.dmMembers). Sempre
+// retorna o formato camelCase usado pra renderizar.
+function normalizeDmVoiceState(userId, raw) {
+    if (!raw) return null;
+    if ('selfMute' in raw || 'selfDeaf' in raw) {
+        return { userId: String(userId), ...raw };
+    }
+    return {
+        userId: String(userId),
+        selfMute: Boolean(raw.self_mute),
+        selfDeaf: Boolean(raw.self_deaf),
+        selfVideo: Boolean(raw.self_video),
+        selfStream: Boolean(raw.self_stream),
+        mute: Boolean(raw.mute),
+        deaf: Boolean(raw.deaf)
+    };
+}
+
+// Quantas outras pessoas (excluindo você) já estão na call de um canal de
+// DM/grupo, segundo o rastreio global (dmVoiceStates). Usado tanto pro
+// indicador na lista lateral quanto pro preview antes de entrar na call.
+function othersInDmChannel(dmVoiceStates, channelId, currentUserId) {
+    const states = dmVoiceStates?.[channelId];
+    if (!states) return [];
+    return Object.keys(states).filter((userId) => String(userId) !== String(currentUserId));
+}
+
 function activeDmEntryFor(activeCalls, channelId) {
     return activeCalls.calls.find((entry) => entry.isDm && entry.channelId === channelId) || null;
 }
@@ -770,6 +799,12 @@ function App() {
     // Separado de `activeCalls` porque chega por um evento de alta frequência
     // (início/fim de fala) e não precisa reconstruir a lista de calls inteira.
     const [dmSpeaking, setDmSpeaking] = useState({});
+    // Voice states de DM/grupo vistos pelo browserClient (gateway "de navegação",
+    // sempre conectado, mesmo sem estar em nenhuma call). O Discord manda esses
+    // VOICE_STATE_UPDATE (guild_id: null) pra todo mundo no canal, não só pra
+    // quem já entrou na call — é assim que dá pra saber que já tem call ativa
+    // num grupo antes de apertar "Ligar". Chave: channelId -> { userId: state }.
+    const [dmVoiceStates, setDmVoiceStates] = useState({});
     const [browserMode, setBrowserMode] = useState(() => {
         return localStorage.getItem('browserMode') === 'dms' ? 'dms' : 'servers';
     });
@@ -888,6 +923,7 @@ function App() {
                 setPrivateChannels([]);
                 setSelectedDmId(null);
                 setDmSpeaking({});
+                setDmVoiceStates({});
             }),
             api.onLogout(() => {
                 setGuilds({});
@@ -898,6 +934,7 @@ function App() {
                 setPrivateChannels([]);
                 setSelectedDmId(null);
                 setDmSpeaking({});
+                setDmVoiceStates({});
                 setLoading(false);
                 setStatus('Desconectado');
             }),
@@ -920,7 +957,68 @@ function App() {
                     return next;
                 });
             }),
+            // Diferente de guild, o Discord não avisa quem já está numa call de
+            // DM/grupo por VOICE_STATE_UPDATE pra quem ainda não entrou — isso só
+            // chega depois que o próprio gateway "se inscreve" no canal ao entrar
+            // na call. Quem avisa uma call já em andamento (com a lista de quem já
+            // está nela) é CALL_CREATE; CALL_DELETE avisa que a call acabou.
+            api.onCallUpdate((payload) => {
+                if (!payload?.channel_id) return;
+
+                if (payload.type === 'CALL_DELETE') {
+                    setDmVoiceStates((previous) => {
+                        if (!previous[payload.channel_id]) return previous;
+                        const next = { ...previous };
+                        delete next[payload.channel_id];
+                        return next;
+                    });
+                    return;
+                }
+
+                if (payload.type === 'CALL_CREATE' && Array.isArray(payload.voice_states)) {
+                    setDmVoiceStates((previous) => {
+                        const states = {};
+                        for (const vs of payload.voice_states) {
+                            if (!vs?.user_id) continue;
+                            states[vs.user_id] = vs;
+                        }
+                        return { ...previous, [payload.channel_id]: states };
+                    });
+                }
+                // CALL_UPDATE só traz region/ringing, sem voice_states — nada a
+                // atualizar aqui; a lista de participantes segue vindo do
+                // CALL_CREATE inicial e dos VOICE_STATE_UPDATE que passam a
+                // chegar depois que a call fica "conhecida" pelo gateway.
+            }),
             api.onVoiceStateUpdate((state) => {
+                if (!state.guild_id) {
+                    // Call de DM/grupo: não pertence a nenhuma guild carregada, então
+                    // o bloco acima (previous[state.guild_id]) nunca batia e o evento
+                    // era descartado. Aqui a chave é o channelId. O evento não diz de
+                    // qual canal a pessoa saiu quando channel_id vem null, então tiramos
+                    // o usuário de todos os canais antes de (re)inserir no atual.
+                    setDmVoiceStates((previous) => {
+                        const next = {};
+                        for (const [channelId, states] of Object.entries(previous)) {
+                            if (!states[state.user_id]) {
+                                next[channelId] = states;
+                                continue;
+                            }
+                            const filtered = { ...states };
+                            delete filtered[state.user_id];
+                            if (Object.keys(filtered).length) next[channelId] = filtered;
+                        }
+                        if (state.channel_id) {
+                            next[state.channel_id] = {
+                                ...(next[state.channel_id] || {}),
+                                [state.user_id]: state
+                            };
+                        }
+                        return next;
+                    });
+                    return;
+                }
+
                 setGuilds((previous) => {
                     const guild = previous[state.guild_id];
                     if (!guild) return previous;
@@ -1102,6 +1200,8 @@ function App() {
                     privateChannels={privateChannels}
                     selectedDmId={selectedDmId}
                     onSelectDm={setSelectedDmId}
+                    dmVoiceStates={dmVoiceStates}
+                    currentUserId={currentUserId}
                 />
                 {browserMode === 'servers' ? (
                     <ChannelsPanel guild={selectedGuild} currentUserId={currentUserId} activeCalls={activeCalls} speakingPriorityEnabled={speakingPriorityEnabled} />
@@ -1112,6 +1212,7 @@ function App() {
                         activeCalls={activeCalls}
                         currentUser={currentUser}
                         dmSpeaking={dmSpeaking}
+                        dmVoiceStates={dmVoiceStates}
                     />
                 )}
                 <ActiveCallsPanel activeCalls={activeCalls} guilds={guilds} />
@@ -1219,7 +1320,8 @@ function App() {
 
 function ServersPanel({
     guilds, selectedGuildId, activeCalls, onSelect,
-    mode, onModeChange, privateChannels, selectedDmId, onSelectDm
+    mode, onModeChange, privateChannels, selectedDmId, onSelectDm,
+    dmVoiceStates, currentUserId
 }) {
     const [query, setQuery] = useState('');
 
@@ -1346,6 +1448,8 @@ function ServersPanel({
                                 activeCalls={activeCalls}
                                 selected={channel.id === selectedDmId}
                                 onSelect={onSelectDm}
+                                dmVoiceStates={dmVoiceStates}
+                                currentUserId={currentUserId}
                             />
                         ))}
                     </div>
@@ -1366,7 +1470,7 @@ async function startDmCall(channel) {
     });
 }
 
-function DmRow({ channel, activeCalls, selected = false, onSelect }) {
+function DmRow({ channel, activeCalls, selected = false, onSelect, dmVoiceStates, currentUserId }) {
     const active = activeDmEntryFor(activeCalls, channel.id);
     const name = dmDisplayName(channel);
     const avatarUrl = dmAvatarUrl(channel);
@@ -1374,12 +1478,18 @@ function DmRow({ channel, activeCalls, selected = false, onSelect }) {
     const connecting = active?.status === 'connecting';
     const error = active?.status === 'error';
 
+    // Gente já na call desse canal, segundo o rastreio global — mostrado
+    // mesmo que você ainda não tenha apertado "Ligar".
+    const othersInCall = othersInDmChannel(dmVoiceStates, channel.id, currentUserId);
+    const activeElsewhere = !active && othersInCall.length > 0;
+
     const classes = [
         'server-row',
         'dm-row',
         selected ? 'selected' : '',
         active ? 'connected' : '',
-        error ? 'call-error' : ''
+        error ? 'call-error' : '',
+        activeElsewhere ? 'call-active-elsewhere' : ''
     ]
         .filter(Boolean)
         .join(' ');
@@ -1411,6 +1521,12 @@ function DmRow({ channel, activeCalls, selected = false, onSelect }) {
             <span className="server-name">
                 {name}
                 {error ? <span className="dm-row-error"> — {active.error || 'Erro ao conectar'}</span> : null}
+                {activeElsewhere ? (
+                    <span className="dm-row-active-call" title="Já tem gente numa call nesse canal">
+                        <span className="dm-row-active-call-dot" />
+                        {othersInCall.length === 1 ? '1 pessoa na call' : `${othersInCall.length} pessoas na call`}
+                    </span>
+                ) : null}
             </span>
             {active ? (
                 <button className="inline-leave dm-hangup-button" type="button" onClick={hangUp} title="Sair da call">
@@ -1430,7 +1546,7 @@ function DmRow({ channel, activeCalls, selected = false, onSelect }) {
 // CHAMADAS DIRETAS — painel principal (chamando.../conectado)
 // ============================================================
 
-function DirectCallsPanel({ privateChannels, selectedDmId, activeCalls, currentUser, dmSpeaking }) {
+function DirectCallsPanel({ privateChannels, selectedDmId, activeCalls, currentUser, dmSpeaking, dmVoiceStates }) {
     const channel = useMemo(
         () => (privateChannels || []).find((item) => item.id === selectedDmId) || null,
         [privateChannels, selectedDmId]
@@ -1456,21 +1572,40 @@ function DirectCallsPanel({ privateChannels, selectedDmId, activeCalls, currentU
                         entry={entry}
                         currentUser={currentUser}
                         dmSpeaking={dmSpeaking}
+                        dmVoiceStates={dmVoiceStates}
                     />
                 ) : (
-                    <DirectCallPreview channel={channel} />
+                    <DirectCallPreview
+                        channel={channel}
+                        dmVoiceStates={dmVoiceStates}
+                        currentUserId={currentUser?.id}
+                    />
                 )}
             </div>
         </section>
     );
 }
 
-/** Conversa selecionada, mas nenhuma call em andamento: mostra quem é e o botão de ligar. */
-function DirectCallPreview({ channel }) {
+/** Conversa selecionada, mas nenhuma call em andamento: mostra quem é, o botão
+ *  de ligar e, se já tiver gente numa call nesse canal, quem já está nela. */
+function DirectCallPreview({ channel, dmVoiceStates, currentUserId }) {
     const name = dmDisplayName(channel);
     const avatarUrl = dmAvatarUrl(channel);
     const isGroup = channel.type === 3;
     const memberCount = (channel.recipients || []).length + 1;
+    const recipients = channel.recipients || [];
+
+    const alreadyInCall = useMemo(() => {
+        const ids = othersInDmChannel(dmVoiceStates, channel.id, currentUserId);
+        return ids.map((userId) => {
+            const user = recipients.find((r) => String(r.id) === String(userId)) || null;
+            return {
+                userId,
+                name: user?.global_name || user?.username || 'Usuário desconhecido',
+                avatarUrl: userAvatarUrl(user, 64)
+            };
+        });
+    }, [dmVoiceStates, channel.id, currentUserId, recipients]);
 
     return (
         <div className="direct-call-preview">
@@ -1479,13 +1614,34 @@ function DirectCallPreview({ channel }) {
             <span className="direct-call-preview-meta">
                 {isGroup ? `Grupo · ${memberCount} membros` : 'Conversa direta'}
             </span>
+
+            {alreadyInCall.length > 0 ? (
+                <div className="direct-call-preview-active">
+                    <div className="direct-call-preview-active-avatars">
+                        {alreadyInCall.slice(0, 5).map((member) => (
+                            <Avatar
+                                key={member.userId}
+                                className="direct-call-preview-active-avatar"
+                                text={member.name}
+                                url={member.avatarUrl}
+                            />
+                        ))}
+                    </div>
+                    <span className="direct-call-preview-active-label">
+                        {alreadyInCall.length === 1
+                            ? `${alreadyInCall[0].name} já está na call`
+                            : `${alreadyInCall.length} pessoas já estão na call`}
+                    </span>
+                </div>
+            ) : null}
+
             <button
                 type="button"
                 className="direct-call-button"
                 onClick={() => startDmCall(channel)}
             >
                 <CallIcon />
-                Ligar
+                {alreadyInCall.length > 0 ? 'Entrar na call' : 'Ligar'}
             </button>
         </div>
     );
@@ -1493,7 +1649,7 @@ function DirectCallPreview({ channel }) {
 
 /** Call de DM/grupo em andamento: tela de "chamando..." até alguém atender,
  *  depois grade com todos os participantes conectados (você incluído). */
-function DirectCallStage({ channel, entry, currentUser, dmSpeaking }) {
+function DirectCallStage({ channel, entry, currentUser, dmSpeaking, dmVoiceStates }) {
     const isGroup = (entry.dmType ?? channel.type) === 3;
     const name = dmDisplayName(channel) || entry.dmName || 'Chamada de voz';
     const avatarUrl = entry.dmAvatarUrl || dmAvatarUrl(channel);
@@ -1501,7 +1657,24 @@ function DirectCallStage({ channel, entry, currentUser, dmSpeaking }) {
     const recipients = channel.recipients || [];
 
     const remoteMembers = useMemo(() => {
-        return Object.values(entry.dmMembers || {}).map((state) => {
+        // entry.dmMembers só é alimentado pelo gateway dedicado da SUA call, que
+        // leva um instante pra "pegar" quem já estava lá (ou pode nunca receber
+        // o retransmit, dependendo do momento em que você entra). dmVoiceStates
+        // é alimentado pelo browserClient, que já sabe quem está no canal desde
+        // antes de você apertar "Ligar" — usamos ele como base e deixamos
+        // entry.dmMembers sobrescrever, já que é a fonte mais "ao vivo" (mute/
+        // deaf mais recentes) uma vez que a call conecta.
+        const merged = {};
+        const globalStates = dmVoiceStates?.[channel.id] || {};
+        for (const [userId, raw] of Object.entries(globalStates)) {
+            if (String(userId) === String(currentUser?.id)) continue;
+            merged[userId] = normalizeDmVoiceState(userId, raw);
+        }
+        for (const [userId, raw] of Object.entries(entry.dmMembers || {})) {
+            merged[userId] = normalizeDmVoiceState(userId, raw);
+        }
+
+        return Object.values(merged).map((state) => {
             const user = recipients.find((r) => String(r.id) === String(state.userId)) || null;
             return {
                 userId: state.userId,
@@ -1514,15 +1687,45 @@ function DirectCallStage({ channel, entry, currentUser, dmSpeaking }) {
                 speaking: Boolean(dmSpeaking[state.userId])
             };
         });
-    }, [entry.dmMembers, recipients, dmSpeaking]);
+    }, [entry.dmMembers, dmVoiceStates, channel.id, currentUser?.id, recipients, dmSpeaking]);
 
     const connecting = entry.status === 'connecting';
     const error = entry.status === 'error';
+    const connected = entry.status === 'connected';
     const ringing = !error && remoteMembers.length === 0;
 
     const toggleMute = () => window.discordVoice.toggleCallMute(entry.id);
     const toggleDeafen = () => window.discordVoice.toggleCallDeafen(entry.id);
     const hangUp = () => window.discordVoice.leaveCall(entry.id);
+
+    // Assistir stream/câmera de um participante da call de DM/grupo. O
+    // backend aceita guildId=null (sempre o caso em DM) e resolve a call
+    // pelo channelId — ver voice:watch-stream / voice:watch-camera no main.
+    const watchStream = async (userId, displayName = 'Transmissão') => {
+        const result = await window.discordVoice.watchStream?.({
+            guildId: entry.guildId,
+            channelId: entry.channelId,
+            userId: String(userId),
+            displayName: String(displayName || 'Transmissão')
+        });
+
+        if (result?.ok === false) {
+            alert(result.error || 'Não foi possível abrir a transmissão.');
+        }
+    };
+
+    const watchCamera = async (userId, displayName = 'Câmera') => {
+        const result = await window.discordVoice.watchCamera?.({
+            guildId: entry.guildId,
+            channelId: entry.channelId,
+            userId: String(userId),
+            displayName: String(displayName || 'Câmera')
+        });
+
+        if (result?.ok === false) {
+            alert(result.error || 'Não foi possível abrir a câmera.');
+        }
+    };
 
     if (ringing) {
         return (
@@ -1543,9 +1746,9 @@ function DirectCallStage({ channel, entry, currentUser, dmSpeaking }) {
                         ? (entry.error || 'Erro ao conectar.')
                         : connecting
                             ? 'Conectando...'
-                            : isGroup
-                                ? 'Chamando o grupo...'
-                                : `Chamando ${name}...`}
+                            : entry.callState === 'ringing' || !connected
+                                ? (isGroup ? 'Chamando o grupo...' : `Chamando ${name}...`)
+                                : (isGroup ? 'Você está sozinho na call...' : `Aguardando ${name}...`)}
                 </span>
 
                 <DirectCallControls
@@ -1582,6 +1785,9 @@ function DirectCallStage({ channel, entry, currentUser, dmSpeaking }) {
                         video={member.video}
                         stream={member.stream}
                         speaking={member.speaking}
+                        connected={connected}
+                        onWatchStream={watchStream}
+                        onWatchCamera={watchCamera}
                     />
                 ))}
             </div>
@@ -1599,7 +1805,10 @@ function DirectCallStage({ channel, entry, currentUser, dmSpeaking }) {
 
 /** Um participante na grade da call: avatar (com anel ao falar) + nome +
  *  badges de câmera/live/mutado/ensurdecido, no mesmo padrão das calls de servidor. */
-function CallMemberTile({ userId, name, avatarUrl, muted, deafened, video, stream, speaking, isSelf = false }) {
+function CallMemberTile({
+    userId, name, avatarUrl, muted, deafened, video, stream, speaking,
+    isSelf = false, connected = false, onWatchStream, onWatchCamera
+}) {
     return (
         <div
             className={`direct-call-tile${isSelf ? ' is-self' : ''}`}
@@ -1616,14 +1825,30 @@ function CallMemberTile({ userId, name, avatarUrl, muted, deafened, video, strea
                 />
 
                 {video ? (
-                    <span className="direct-call-tile-badge direct-call-tile-badge-video" title="Câmera ligada">
+                    <span
+                        className="direct-call-tile-badge direct-call-tile-badge-video"
+                        title={connected ? 'Assistir à câmera' : 'Câmera ligada'}
+                        role={connected ? 'button' : undefined}
+                        tabIndex={connected ? 0 : undefined}
+                        onClick={connected ? (event) => {
+                            event.stopPropagation();
+                            onWatchCamera?.(userId, name);
+                        } : undefined}
+                        onKeyDown={connected ? (event) => {
+                            event.stopPropagation();
+                            activateWithKeyboard(event, () => onWatchCamera?.(userId, name));
+                        } : undefined}
+                    >
                         <CameraIcon />
                     </span>
                 ) : null}
 
                 {stream ? (
                     <span className="direct-call-tile-badge direct-call-tile-badge-live">
-                        <StreamBadge disabled />
+                        <StreamBadge
+                            disabled={!connected}
+                            onClick={() => onWatchStream?.(userId, name)}
+                        />
                     </span>
                 ) : null}
             </div>

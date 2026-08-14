@@ -240,8 +240,28 @@ function sendToRenderer(channel, payload) {
     mainWindow.webContents.send(channel, payload);
 }
 
-function streamWindowKey(guildId, channelId, userId) {
-    return `guild:${guildId}:${channelId}:${userId}`;
+// O stream_key do protocolo de voz do Discord tem DOIS formatos possíveis:
+//   - call de servidor: "guild:<guildId>:<channelId>:<userId>"  (4 partes)
+//   - call de DM/grupo: "call:<channelId>:<userId>"             (3 partes, sem guildId)
+// (ver parseStreamKey em stream-viewer.js, que já esperava os dois formatos).
+// Antes essa função sempre gerava o formato "guild:", inclusive para DM —
+// nesse caso guildId é null, então a chave virava "guild:null:...", que o
+// Discord não reconhece e a stream nunca conectava.
+// Quanto tempo esperar, depois de entrar numa call de DM, antes de avisar
+// que a pessoa não atendeu.
+const DM_RING_TIMEOUT_MS = 45000;
+
+function clearNoAnswerTimer(entry) {
+    if (entry.noAnswerTimer) {
+        clearTimeout(entry.noAnswerTimer);
+        entry.noAnswerTimer = null;
+    }
+}
+
+function streamWindowKey({ isDm, guildId, channelId, userId }) {
+    return isDm
+        ? `call:${channelId}:${userId}`
+        : `guild:${guildId}:${channelId}:${userId}`;
 }
 
 function createStreamWindow(streamKey, userId, displayName = 'Transmissão') {
@@ -279,14 +299,28 @@ function createStreamWindow(streamKey, userId, displayName = 'Transmissão') {
         // The media session is separate from the voice call, so closing the
         // viewer should stop only this stream subscription.
         const parsed = streamKey.split(':');
+
         if (parsed[0] === 'camera' && parsed.length === 4) {
+            // camera:<callId>:<channelId>:<userId> — callId = guildId (server) ou
+            // channelId (DM), sempre a mesma chave usada em voiceClients.
             const entry = voiceClients.get(parsed[1]);
             entry?.client?.stopWatchingCamera?.(parsed[3]);
             entry?.cameraKeys?.delete(streamKey);
             return;
         }
 
-        if (parsed.length === 4) {
+        if (parsed[0] === 'guild' && parsed.length === 4) {
+            // guild:<guildId>:<channelId>:<userId>
+            const entry = voiceClients.get(parsed[1]);
+            entry?.client?.stopWatchingStream?.(streamKey);
+            entry?.streamKeys?.delete(streamKey);
+            if (entry?.streamKey === streamKey) entry.streamKey = entry.streamKeys?.values().next().value || null;
+            return;
+        }
+
+        if (parsed[0] === 'call' && parsed.length === 3) {
+            // call:<channelId>:<userId> — formato de DM/grupo. A entrada em
+            // voiceClients é guardada pela channelId (parsed[1]).
             const entry = voiceClients.get(parsed[1]);
             entry?.client?.stopWatchingStream?.(streamKey);
             entry?.streamKeys?.delete(streamKey);
@@ -350,6 +384,16 @@ function activeCallsPayload() {
             status: entry.status || 'connected',
             error: entry.error || null,
 
+            // Estado de "atendimento" da call de DM/grupo, pra UI poder
+            // mostrar "chamando...", "ninguém atendeu" ou "sozinho na call"
+            // em vez de só "conectado". Sempre undefined para calls de
+            // servidor (não se aplica).
+            callState: entry.isDm
+                ? (!entry.answered
+                    ? 'ringing'
+                    : (Object.keys(entry.voiceStates || {}).length === 0 ? 'alone' : 'active'))
+                : undefined,
+
             switching: Boolean(entry.pending),
 
             inputLevel: Number(entry.inputLevel || 0),
@@ -396,6 +440,7 @@ function logout() {
 function stopAllVoiceClients() {
     for (const entry of voiceClients.values()) {
         entry.pending = null;
+        clearNoAnswerTimer(entry);
         entry.client.stopWatchingStream?.();
         entry.client.disconnect();
     }
@@ -983,6 +1028,14 @@ function startDmVoiceCall(dmChannel) {
         inputLevel: 0,
         outputLevel: 0,
 
+        // Rastreio de "atendimento" da call de DM: ninguém tinha visibilidade
+        // se você está chamando, esperando atender, sozinho na call ou se a
+        // pessoa não atendeu. Isso é derivado aqui e exposto em
+        // activeCallsPayload() como `callState`.
+        answered: false,
+        ringSince: null,
+        noAnswerTimer: null,
+
         // Estado de voz dos OUTROS participantes da chamada (DM ou grupo).
         // Chave: user_id (string) -> { selfMute, selfDeaf, selfVideo, selfStream, mute, deaf }.
         // Alimentado pelos VOICE_STATE_UPDATE recebidos nesta sessão de gateway
@@ -1021,6 +1074,7 @@ function startDmVoiceCall(dmChannel) {
                 entry.externallyDisconnected = true;
                 entry.status = 'disconnected';
                 entry.error = null;
+                clearNoAnswerTimer(entry);
 
                 log(`[Voice] Você foi desconectado da call em ${entry.channelName} externamente.`);
 
@@ -1060,11 +1114,23 @@ function startDmVoiceCall(dmChannel) {
                 };
 
                 log(`[Voice] ${userId} entrou na call de ${entry.channelName}.`);
+
+                if (!entry.answered) {
+                    entry.answered = true;
+                    clearNoAnswerTimer(entry);
+                    log(`[Voice] ${userId} atendeu a call de ${entry.channelName}.`);
+                    sendToRenderer('voice:status', `${entry.channelName} atendeu a call.`);
+                }
             } else {
                 // Saiu da call (channel_id null ou trocou de canal).
                 if (entry.voiceStates[userId]) {
                     delete entry.voiceStates[userId];
                     log(`[Voice] ${userId} saiu da call de ${entry.channelName}.`);
+
+                    if (entry.answered && Object.keys(entry.voiceStates).length === 0) {
+                        log(`[Voice] Você ficou sozinho na call de ${entry.channelName}.`);
+                        sendToRenderer('voice:status', `Você está sozinho na call de ${entry.channelName}.`);
+                    }
                 }
             }
 
@@ -1094,6 +1160,39 @@ function startDmVoiceCall(dmChannel) {
                 publishActiveCalls();
             }
         },
+        onStreamFrame: (frame) => {
+            const streamKey = frame?.streamKey || entry.streamKey;
+            if (!streamKey) return;
+            sendToStreamWindow(streamKey, 'stream:video-frame', {
+                codec: frame.codec,
+                key: Boolean(frame.key),
+                timestamp: Number(frame.timestamp || 0),
+                data: Buffer.from(frame.data || [])
+            });
+        },
+        onStreamStatus: (status) => {
+            const streamKey = status?.streamKey || entry.streamKey;
+            if (!streamKey) return;
+            sendToStreamWindow(streamKey, 'stream:status', status);
+        },
+        onCameraFrame: (frame) => {
+            if (!frame?.userId) return;
+            const streamKey = `camera:${channelId}:${entry.channelId}:${String(frame.userId)}`;
+            sendToStreamWindow(streamKey, 'stream:video-frame', {
+                codec: frame.codec,
+                key: Boolean(frame.key),
+                timestamp: Number(frame.timestamp || 0),
+                data: Buffer.from(frame.data || [])
+            });
+        },
+        onCameraStatus: (status) => {
+            if (!status?.userId) return;
+            const streamKey = `camera:${channelId}:${entry.channelId}:${String(status.userId)}`;
+            sendToStreamWindow(streamKey, 'stream:status', {
+                ...status,
+                streamKey
+            });
+        },
         onReady: () => {
             entry.status = 'connected';
             entry.error = null;
@@ -1107,10 +1206,31 @@ function startDmVoiceCall(dmChannel) {
 
             publishActiveCalls();
 
-            sendToRenderer('voice:status', `Conectado na call de ${entry.channelName}.`);
+            if (Object.keys(entry.voiceStates).length > 0) {
+                // O outro lado já estava na call quando você entrou.
+                entry.answered = true;
+                sendToRenderer('voice:status', `Conectado na call de ${entry.channelName}.`);
+            } else {
+                // Você entrou primeiro: está "chamando", esperando a pessoa
+                // atender. Se ninguém entrar em DM_RING_TIMEOUT_MS, avisa que
+                // não atenderam.
+                entry.ringSince = Date.now();
+                sendToRenderer('voice:status', `Chamando ${entry.channelName}... aguardando atender.`);
+
+                clearNoAnswerTimer(entry);
+                entry.noAnswerTimer = setTimeout(() => {
+                    if (voiceClients.get(channelId) !== entry) return;
+                    if (entry.answered) return;
+
+                    log(`[Voice] ${entry.channelName} não atendeu a call.`);
+                    sendToRenderer('voice:status', `${entry.channelName} não atendeu a call.`);
+                }, DM_RING_TIMEOUT_MS);
+            }
         },
         onDisconnected: (reason) => {
             if (voiceClients.get(channelId) !== entry) return;
+
+            clearNoAnswerTimer(entry);
 
             if (entry.externallyDisconnected) {
                 voiceClients.delete(channelId);
@@ -1318,6 +1438,20 @@ ipcMain.handle('voice:load-servers', async (_event, { token }) => {
             if (browserClient !== nextClient) return;
             sendToRenderer('voice:guild-create', guild);
         },
+        // CALL_CREATE/CALL_UPDATE/CALL_DELETE são enviados pelo Gateway
+        // para chamadas de DM/grupo. Esses eventos são especialmente
+        // importantes no início da aplicação: se a call já existia antes
+        // do login, não haverá um VOICE_STATE_UPDATE novo para "descobri-la".
+        // O renderer já trata `voice:call-update`; faltava apenas retransmitir
+        // os eventos recebidos pelo browserClient.
+        onCallUpdate: (type, data) => {
+            if (browserClient !== nextClient) return;
+
+            sendToRenderer('voice:call-update', {
+                type,
+                ...(data || {})
+            });
+        },
         onVoiceStateUpdate: (state) => {
             if (browserClient !== nextClient) return;
             sendToRenderer('voice:voice-state', state);
@@ -1345,12 +1479,16 @@ ipcMain.handle('voice:set-stream-advanced-controls', async (_event, { enabled } 
 });
 
 ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId, displayName }) => {
-    const entry = voiceClients.get(String(guildId));
+    // Calls de servidor ficam em voiceClients por guildId; calls de DM/grupo
+    // ficam por channelId (guildId é null nesse caso). Antes essa busca só
+    // olhava guildId, então em DM nunca encontrava a entrada e a UI dizia
+    // "você precisa estar conectado à call" mesmo estando conectado.
+    const entry = voiceClients.get(String(guildId || channelId));
     if (!entry?.client || entry.status !== 'connected') {
         return { ok: false, error: 'Você precisa estar conectado à call.' };
     }
 
-    const streamKey = streamWindowKey(guildId, channelId, userId);
+    const streamKey = streamWindowKey({ isDm: entry.isDm, guildId, channelId, userId });
 
     if (!entry.streamKeys) entry.streamKeys = new Set();
     entry.streamKeys.add(streamKey);
@@ -1374,12 +1512,15 @@ ipcMain.handle('voice:watch-stream', async (_event, { guildId, channelId, userId
 });
 
 ipcMain.handle('voice:watch-camera', async (_event, { guildId, channelId, userId, displayName }) => {
-    const entry = voiceClients.get(String(guildId));
+    // Mesmo problema do watch-stream: em DM guildId é null, a call fica
+    // guardada por channelId.
+    const callId = String(guildId || channelId);
+    const entry = voiceClients.get(callId);
     if (!entry?.client || entry.status !== 'connected') {
         return { ok: false, error: 'Você precisa estar conectado à call.' };
     }
 
-    const streamKey = `camera:${guildId}:${channelId}:${String(userId)}`;
+    const streamKey = `camera:${callId}:${channelId}:${String(userId)}`;
     if (!entry.cameraKeys) entry.cameraKeys = new Set();
     entry.cameraKeys.add(streamKey);
 
@@ -1466,6 +1607,7 @@ ipcMain.handle('voice:leave-call', async (_event, { guildId }) => {
     if (!entry) return;
 
     entry.pending = null;
+    clearNoAnswerTimer(entry);
     voiceClients.delete(guildId);
     entry.client.disconnect();
     sendToRenderer('voice:status', `Saiu da call de ${entry.guildName || entry.dmName || entry.channelName}.`);

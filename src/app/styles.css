@@ -433,6 +433,36 @@ input:disabled {
     font-weight: 400;
 }
 
+.dm-row-active-call {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 2px;
+    color: #23a55a;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.dm-row-active-call-dot {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #23a55a;
+    box-shadow: 0 0 0 0 rgba(35, 165, 90, 0.6);
+    animation: dm-active-call-pulse 2s infinite;
+}
+
+@keyframes dm-active-call-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(35, 165, 90, 0.55); }
+    70% { box-shadow: 0 0 0 5px rgba(35, 165, 90, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(35, 165, 90, 0); }
+}
+
+.dm-row.call-active-elsewhere .server-name {
+    color: #23a55a;
+}
+
 .dm-call-button,
 .dm-hangup-button {
     display: inline-flex;
@@ -1638,6 +1668,50 @@ input:disabled {
 .direct-call-preview-meta {
     color: #949ba4;
     font-size: 12px;
+}
+
+.direct-call-preview-active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.direct-call-preview-active-avatars {
+    display: flex;
+}
+
+.direct-call-preview-active-avatar {
+    display: inline-flex;
+    overflow: hidden;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-left: -8px;
+    border: 2px solid #313338;
+    border-radius: 50%;
+    color: #fff;
+    background: #5865f2;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.direct-call-preview-active-avatar:first-child {
+    margin-left: 0;
+}
+
+.direct-call-preview-active-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.direct-call-preview-active-label {
+    color: #23a55a;
+    font-size: 12px;
+    font-weight: 600;
 }
 
 .direct-call-button {

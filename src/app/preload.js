@@ -78,6 +78,9 @@ contextBridge.exposeInMainWorld('discordVoice', {
     onGuildCreate(callback) {
         return subscribe('voice:guild-create', callback);
     },
+    onCallUpdate(callback) {
+        return subscribe('voice:call-update', callback);
+    },
     onVoiceStateUpdate(callback) {
         return subscribe('voice:voice-state', callback);
     },
