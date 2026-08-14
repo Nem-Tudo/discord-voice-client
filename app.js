@@ -337,6 +337,42 @@ function sendToStreamWindow(streamKey, channel, payload) {
     win.webContents.send(channel, payload);
 }
 
+
+// Fecha automaticamente a janela da transmissão quando o streamer deixa a
+// call. O evento STREAM_DELETE cobre quando ele apenas encerra a transmissão.
+function closeStreamWindowsForParticipant({ guildId = null, channelId = null, userId = null } = {}) {
+    const uid = String(userId || '');
+    const cid = channelId == null ? null : String(channelId);
+    const gid = guildId == null ? null : String(guildId);
+    if (!uid) return;
+
+    for (const [streamKey, win] of streamWindows.entries()) {
+        if (!win || win.isDestroyed()) {
+            streamWindows.delete(streamKey);
+            continue;
+        }
+        const parts = String(streamKey).split(':');
+        let matches = false;
+        if (parts[0] === 'call' && parts.length === 3) {
+            matches = gid === null && parts[2] === uid && (cid === null || parts[1] === cid);
+        } else if (parts[0] === 'guild' && parts.length === 4) {
+            matches = gid !== null && parts[1] === gid && parts[3] === uid && (cid === null || parts[2] === cid);
+        }
+        if (matches) {
+            try { win.close(); } catch (_) {}
+        }
+    }
+}
+
+function closeStreamWindow(streamKey) {
+    const key = String(streamKey || '');
+    if (!key) return;
+    const win = streamWindows.get(key);
+    if (win && !win.isDestroyed()) {
+        try { win.close(); } catch (_) {}
+    }
+}
+
 function sendToLogsWindow(channel, payload) {
     if (!logsWindow || logsWindow.isDestroyed()) return;
     logsWindow.webContents.send(channel, payload);
@@ -831,6 +867,7 @@ function startVoiceCall(guild, channel, {
             const streamKey = status?.streamKey || entry.streamKey;
             if (!streamKey) return;
             sendToStreamWindow(streamKey, 'stream:status', status);
+            if (status?.status === 'stopped') closeStreamWindow(streamKey);
         },
         onCameraFrame: (frame) => {
             if (!frame?.userId) return;
@@ -1122,7 +1159,10 @@ function startDmVoiceCall(dmChannel) {
                     sendToRenderer('voice:status', `${entry.channelName} atendeu a call.`);
                 }
             } else {
-                // Saiu da call (channel_id null ou trocou de canal).
+                // Se esse usuário era o streamer assistido e saiu/trocou de call,
+                // feche a janela imediatamente.
+                closeStreamWindowsForParticipant({ guildId: null, channelId: entry.channelId, userId });
+
                 if (entry.voiceStates[userId]) {
                     delete entry.voiceStates[userId];
                     log(`[Voice] ${userId} saiu da call de ${entry.channelName}.`);
@@ -1174,6 +1214,7 @@ function startDmVoiceCall(dmChannel) {
             const streamKey = status?.streamKey || entry.streamKey;
             if (!streamKey) return;
             sendToStreamWindow(streamKey, 'stream:status', status);
+            if (status?.status === 'stopped') closeStreamWindow(streamKey);
         },
         onCameraFrame: (frame) => {
             if (!frame?.userId) return;
@@ -1454,6 +1495,19 @@ ipcMain.handle('voice:load-servers', async (_event, { token }) => {
         },
         onVoiceStateUpdate: (state) => {
             if (browserClient !== nextClient) return;
+
+            // Se o streamer sair da call (channel_id=null) ou mudar de canal,
+            // feche a janela de transmissão correspondente. Em DM/grupo o
+            // canal é conhecido pelo evento; em servidor, channel_id=null não
+            // informa o canal anterior, então usamos guildId + userId.
+            if (state?.user_id && state?.channel_id == null) {
+                closeStreamWindowsForParticipant({
+                    guildId: state.guild_id || null,
+                    channelId: null,
+                    userId: state.user_id
+                });
+            }
+
             sendToRenderer('voice:voice-state', state);
         },
         onDisconnected: (reason) => {
