@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import tippy from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 
@@ -799,6 +799,11 @@ function useUserAudio() {
     };
 }
 
+/**
+ * Menu de áudio do usuário (botão direito num membro/participante), com o
+ * mesmo visual e comportamento do ShortcutRecorderMenu: caixinha flutuante
+ * simples, sem fundo escurecido, que fecha ao clicar fora.
+ */
 function UserAudioModal({ user, onClose }) {
     const { volumes, muted, favorites, setVolume, setMuted, setFavorite } = useUserAudio();
     const userId = String(user?.id || '');
@@ -806,6 +811,12 @@ function UserAudioModal({ user, onClose }) {
     const isMuted = muted.includes(userId);
     const isFavorite = favorites.includes(userId);
     const modalRef = useRef(null);
+    const [style, setStyle] = useState({
+        position: 'fixed',
+        top: user?.y ?? 0,
+        left: user?.x ?? 0,
+        visibility: 'hidden'
+    });
 
     useOutsideClick(modalRef, onClose, true);
 
@@ -813,10 +824,27 @@ function UserAudioModal({ user, onClose }) {
         setLocalVolume(Number(volumes[userId] ?? 100));
     }, [userId, volumes]);
 
+    // Posiciona a caixinha no ponto onde o usuário clicou, ajustando para
+    // não estourar a borda da janela — igual a um menu de contexto normal.
+    useLayoutEffect(() => {
+        const el = modalRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        const margin = 8;
+        let left = user?.x ?? 0;
+        let top = user?.y ?? 0;
+        if (left + rect.width + margin > window.innerWidth) {
+            left = Math.max(margin, window.innerWidth - rect.width - margin);
+        }
+        if (top + rect.height + margin > window.innerHeight) {
+            top = Math.max(margin, window.innerHeight - rect.height - margin);
+        }
+        setStyle({ position: 'fixed', top, left, visibility: 'visible' });
+    }, [user?.x, user?.y]);
+
     if (!userId) return null;
 
     const name = user?.name || user?.global_name || user?.username || 'Usuário desconhecido';
-    const avatarUrl = user?.avatarUrl || userAvatarUrl(user, 128);
 
     const handleVolume = (event) => {
         const value = Math.max(0, Math.min(200, Number(event.target.value) || 0));
@@ -825,57 +853,52 @@ function UserAudioModal({ user, onClose }) {
     };
 
     return (
-        <div className="user-audio-modal-backdrop" onContextMenu={(event) => event.preventDefault()}>
-            <div className="user-audio-modal shortcut-recorder-menu user-audio-shortcut-style" ref={modalRef} onClick={(event) => event.stopPropagation()}>
-                <div className="user-audio-modal-titlebar">
-                    <div className="shortcut-recorder-title">Áudio do usuário</div>
-                    <button type="button" className="user-audio-modal-close" onClick={onClose} aria-label="Fechar">×</button>
-                </div>
+        <div
+            className="shortcut-recorder-menu user-audio-menu"
+            style={style}
+            ref={modalRef}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+        >
+            <div className="shortcut-recorder-title">Áudio do usuário</div>
 
-                <div className="shortcut-recorder-current user-audio-user-line">
-                    <span className="user-audio-user-name">{name}</span>
-                    {isFavorite ? <span className="user-favorite-star" title="Favorito">★</span> : null}
-                </div>
+            <div className="shortcut-recorder-current">
+                {name}
+                {isFavorite ? <span className="user-favorite-star" title="Favorito">★</span> : null}
+            </div>
 
-                <div className="user-audio-control-block">
-                    <div className="shortcut-recorder-current user-audio-control-label">
-                        <span>Volume</span>
-                        <b>{Math.round(volume)}%</b>
-                    </div>
-                    <input
-                        className="user-audio-volume-slider"
-                        type="range"
-                        min="0"
-                        max="200"
-                        step="1"
-                        value={volume}
-                        onChange={handleVolume}
-                    />
-                    <div className="user-audio-volume-labels">
-                        <span>0%</span><span>100%</span><span>200%</span>
-                    </div>
-                </div>
+            <div className="shortcut-recorder-current user-audio-volume-row">
+                <span>Volume</span>
+                <b>{Math.round(volume)}%</b>
+            </div>
+            <input
+                className="user-audio-volume-slider"
+                type="range"
+                min="0"
+                max="200"
+                step="1"
+                value={volume}
+                onChange={handleVolume}
+            />
 
-                <button
-                    type="button"
-                    className={`shortcut-recorder-btn${isMuted ? ' user-audio-btn-danger' : ''}`}
-                    onClick={() => setMuted(userId, !isMuted)}
-                >
-                    {isMuted ? 'Desmutar pessoa' : 'Mutar pessoa'}
-                </button>
+            <button
+                type="button"
+                className={`shortcut-recorder-btn${isMuted ? ' shortcut-recorder-btn-danger' : ''}`}
+                onClick={() => setMuted(userId, !isMuted)}
+            >
+                {isMuted ? 'Desmutar pessoa' : 'Mutar pessoa'}
+            </button>
 
-                <button
-                    type="button"
-                    className={`shortcut-recorder-btn${isFavorite ? ' user-audio-btn-favorite-active' : ''}`}
-                    onClick={() => setFavorite(userId, !isFavorite)}
-                >
-                    <span className="user-audio-star">★</span>
-                    {isFavorite ? 'Remover favorito' : 'Favoritar'}
-                </button>
+            <button
+                type="button"
+                className={`shortcut-recorder-btn${isFavorite ? ' user-audio-btn-favorite-active' : ''}`}
+                onClick={() => setFavorite(userId, !isFavorite)}
+            >
+                {isFavorite ? '★ Remover favorito' : '★ Favoritar'}
+            </button>
 
-                <div className="shortcut-recorder-hint user-audio-modal-hint">
-                    Quando um favorito falar, os usuários não favoritos terão o áudio reduzido temporariamente.
-                </div>
+            <div className="shortcut-recorder-hint">
+                Quando um favorito falar, os usuários não favoritos terão o áudio reduzido temporariamente.
             </div>
         </div>
     );
@@ -1963,18 +1986,26 @@ function CallMemberTile({
 }) {
     const { favorites, openUserAudio } = useUserAudio();
     const isFavorite = favorites.includes(String(userId));
+
+    const openAudioAt = (x, y) => {
+        openUserAudio({ id: String(userId), name, avatarUrl, x, y });
+    };
+
     return (
         <div
             className={`direct-call-tile${isSelf ? ' is-self' : ''}`}
             role={isSelf ? undefined : 'button'}
             tabIndex={isSelf ? undefined : 0}
-            onClick={isSelf ? undefined : () => window.discordVoice.openDiscordUser(userId)}
+            onClick={isSelf ? undefined : (event) => openAudioAt(event.clientX, event.clientY)}
             onContextMenu={isSelf ? undefined : (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                openUserAudio({ id: String(userId), name, avatarUrl });
+                openAudioAt(event.clientX, event.clientY);
             }}
-            onKeyDown={isSelf ? undefined : (event) => activateWithKeyboard(event, () => window.discordVoice.openDiscordUser(userId))}
+            onKeyDown={isSelf ? undefined : (event) => activateWithKeyboard(event, () => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                openAudioAt(rect.left, rect.bottom);
+            })}
         >
             <div className="direct-call-tile-avatar-wrap">
                 <Avatar
@@ -2592,13 +2623,13 @@ function ChannelCard({ guild, channel, activeCalls, currentUserId, speakingPrior
                             <div
                                 key={state.user_id}
                                 className="discord-voice-member"
-                                onClick={() => {
-                                    window.discordVoice.openDiscordUser(state.user_id);
+                                onClick={(event) => {
+                                    openUserAudio({ id: String(state.user_id), name, avatarUrl: userAvatarUrl(user, 128), x: event.clientX, y: event.clientY });
                                 }}
                                 onContextMenu={(event) => {
                                     event.preventDefault();
                                     event.stopPropagation();
-                                    openUserAudio({ id: String(state.user_id), name, avatarUrl: userAvatarUrl(user, 128) });
+                                    openUserAudio({ id: String(state.user_id), name, avatarUrl: userAvatarUrl(user, 128), x: event.clientX, y: event.clientY });
                                 }}
                             >
                                 <Avatar
